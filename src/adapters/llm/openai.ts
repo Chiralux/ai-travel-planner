@@ -3,6 +3,36 @@ import { loadEnv } from "../../core/config/env";
 import { itinerarySchema } from "../../core/validation/itinerarySchema";
 import { itinerarySystemPrompt, itineraryUserPrompt } from "../../core/prompts/itineraryPrompt";
 
+function normalizeItineraryPayload(payload: unknown) {
+  if (!payload || typeof payload !== "object") {
+    return payload;
+  }
+
+  const clone: Record<string, unknown> = { ...(payload as Record<string, unknown>) };
+
+  if (Array.isArray(clone.tips)) {
+    clone.tips = clone.tips.map(String).join("\n");
+  }
+
+  if (clone.daily_plan && Array.isArray(clone.daily_plan)) {
+    clone.daily_plan = clone.daily_plan.map((day) => {
+      if (!day || typeof day !== "object") {
+        return day;
+      }
+
+      const dayClone: Record<string, unknown> = { ...(day as Record<string, unknown>) };
+
+      if (!Array.isArray(dayClone.activities)) {
+        dayClone.activities = [];
+      }
+
+      return dayClone;
+    });
+  }
+
+  return clone;
+}
+
 const OPENAI_ENDPOINT = "https://api.openai.com/v1/chat/completions";
 
 export class OpenAIClient implements LLMClient {
@@ -55,6 +85,8 @@ export class OpenAIClient implements LLMClient {
       throw new Error("OpenAI returned invalid JSON");
     }
 
-    return itinerarySchema.parse(parsed);
+    const normalized = normalizeItineraryPayload(parsed);
+
+    return itinerarySchema.parse(normalized);
   }
 }
