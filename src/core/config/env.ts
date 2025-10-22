@@ -15,7 +15,8 @@ const envSchema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),
   NEXT_TELEMETRY_DISABLED: z.string().optional(),
   REDIS_URL: z.string().optional(),
-  LOGTAIL_SOURCE_TOKEN: z.string().optional()
+  LOGTAIL_SOURCE_TOKEN: z.string().optional(),
+  OPENAI_API_KEY: z.string().optional()
 });
 
 export type AppEnv = z.infer<typeof envSchema>;
