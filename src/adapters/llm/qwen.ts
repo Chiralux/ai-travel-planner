@@ -12,6 +12,16 @@ function normalizeItineraryPayload(payload: unknown) {
 
   const clone: Record<string, unknown> = { ...(payload as Record<string, unknown>) };
 
+  if (clone.budget_estimate != null) {
+    const numeric = Number(clone.budget_estimate);
+    clone.budget_estimate = Number.isFinite(numeric) ? numeric : undefined;
+  }
+
+  if (clone.party_size != null) {
+    const numeric = Number(clone.party_size);
+    clone.party_size = Number.isFinite(numeric) ? Math.max(1, Math.round(numeric)) : undefined;
+  }
+
   if (Array.isArray(clone.tips)) {
     clone.tips = clone.tips.map(String).join("\n");
   }
@@ -26,6 +36,23 @@ function normalizeItineraryPayload(payload: unknown) {
 
       if (!Array.isArray(dayClone.activities)) {
         dayClone.activities = [];
+      } else {
+        dayClone.activities = dayClone.activities.map((activity) => {
+          if (!activity || typeof activity !== "object") {
+            return activity;
+          }
+
+          const activityClone: Record<string, unknown> = {
+            ...(activity as Record<string, unknown>)
+          };
+
+          if (activityClone.cost_estimate != null) {
+            const numeric = Number(activityClone.cost_estimate);
+            activityClone.cost_estimate = Number.isFinite(numeric) ? numeric : undefined;
+          }
+
+          return activityClone;
+        });
       }
 
       return dayClone;
