@@ -22,12 +22,26 @@ const dailyPlanSchema = z
   })
   .describe("Plan for a single day");
 
+const budgetBreakdownSchema = z
+  .object({
+    total: z.number().nonnegative(),
+    currency: z.string().default("CNY"),
+    accommodation: z.number().nonnegative().optional(),
+    transport: z.number().nonnegative().optional(),
+    food: z.number().nonnegative().optional(),
+    activities: z.number().nonnegative().optional(),
+    other: z.number().nonnegative().optional(),
+    notes: z.string().optional()
+  })
+  .describe("Budget summary for the trip");
+
 // Overall itinerary contract passed between layers.
 export const itinerarySchema = z
   .object({
     destination: z.string().min(1, "Destination is required"),
     days: z.number().int().positive(),
     budget_estimate: z.number().nonnegative().optional(),
+    budget_breakdown: budgetBreakdownSchema.optional(),
     party_size: z.number().int().positive().optional(),
     preference_tags: z.array(z.string()).default([]),
     daily_plan: z.array(dailyPlanSchema).default([]),
@@ -37,4 +51,5 @@ export const itinerarySchema = z
 
 export type Activity = z.infer<typeof activitySchema>;
 export type DailyPlan = z.infer<typeof dailyPlanSchema>;
+export type BudgetBreakdown = z.infer<typeof budgetBreakdownSchema>;
 export type Itinerary = z.infer<typeof itinerarySchema>;

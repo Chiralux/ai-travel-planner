@@ -22,6 +22,14 @@ describe("itinerarySchema", () => {
         }
       ],
       budget_estimate: 1000,
+      budget_breakdown: {
+        total: 1000,
+        currency: "CNY",
+        accommodation: 400,
+        transport: 200,
+        food: 250,
+        activities: 150
+      },
       party_size: 3
     });
 

@@ -32,6 +32,26 @@ function normalizeItineraryPayload(payload: unknown) {
     });
   }
 
+  const breakdown = clone.budget_breakdown;
+  if (breakdown && typeof breakdown === "object") {
+    const breakdownClone: Record<string, unknown> = { ...(breakdown as Record<string, unknown>) };
+
+    if (breakdownClone.currency && typeof breakdownClone.currency !== "string") {
+      breakdownClone.currency = String(breakdownClone.currency);
+    }
+
+    const costKeys = ["total", "accommodation", "transport", "food", "activities", "other"] as const;
+    costKeys.forEach((key) => {
+      const value = breakdownClone[key];
+      if (value != null) {
+        const numeric = Number(value);
+        breakdownClone[key] = Number.isFinite(numeric) ? numeric : undefined;
+      }
+    });
+
+    clone.budget_breakdown = breakdownClone;
+  }
+
   return clone;
 }
 
