@@ -9,17 +9,19 @@ async function resolveRequest(): Promise<RequestLike> {
     return cachedRequest;
   }
 
-  try {
-    const module = await import("@ant-design/maps");
-    const candidate = (module as Record<string, unknown>).request;
+  if (typeof window !== "undefined" && typeof document !== "undefined") {
+    try {
+      const module = await import("@ant-design/maps");
+      const candidate = (module as Record<string, unknown>).request;
 
-    if (typeof candidate === "function") {
-      cachedRequest = candidate as RequestLike;
-      return cachedRequest;
-    }
-  } catch (error) {
-    if (process.env.NODE_ENV !== "production") {
-      console.warn("[@ant-design/maps] request helper unavailable, falling back to fetch", error);
+      if (typeof candidate === "function") {
+        cachedRequest = candidate as RequestLike;
+        return cachedRequest;
+      }
+    } catch (error) {
+      if (process.env.NODE_ENV !== "production") {
+        console.warn("[@ant-design/maps] request helper unavailable in browser, falling back to fetch", error);
+      }
     }
   }
 
