@@ -5,6 +5,30 @@ import { itinerarySystemPrompt, itineraryUserPrompt } from "../../core/prompts/i
 
 const DASH_SCOPE_ENDPOINT = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
 
+function coerceNumber(value: unknown): number | undefined {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : undefined;
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.replace(/[\s,]/g, "");
+    const match = normalized.match(/-?\d+(?:\.\d+)?/);
+
+    if (!match) {
+      return undefined;
+    }
+
+    const numeric = Number(match[0]);
+    return Number.isFinite(numeric) ? numeric : undefined;
+  }
+
+  if (typeof value === "boolean") {
+    return value ? 1 : 0;
+  }
+
+  return undefined;
+}
+
 function normalizeItineraryPayload(payload: unknown) {
   if (!payload || typeof payload !== "object") {
     return payload;
@@ -13,13 +37,13 @@ function normalizeItineraryPayload(payload: unknown) {
   const clone: Record<string, unknown> = { ...(payload as Record<string, unknown>) };
 
   if (clone.budget_estimate != null) {
-    const numeric = Number(clone.budget_estimate);
-    clone.budget_estimate = Number.isFinite(numeric) ? numeric : undefined;
+    const numeric = coerceNumber(clone.budget_estimate);
+    clone.budget_estimate = typeof numeric === "number" ? numeric : undefined;
   }
 
   if (clone.party_size != null) {
-    const numeric = Number(clone.party_size);
-    clone.party_size = Number.isFinite(numeric) ? Math.max(1, Math.round(numeric)) : undefined;
+    const numeric = coerceNumber(clone.party_size);
+    clone.party_size = typeof numeric === "number" ? Math.max(1, Math.round(numeric)) : undefined;
   }
 
   if (Array.isArray(clone.tips)) {
@@ -47,8 +71,8 @@ function normalizeItineraryPayload(payload: unknown) {
           };
 
           if (activityClone.cost_estimate != null) {
-            const numeric = Number(activityClone.cost_estimate);
-            activityClone.cost_estimate = Number.isFinite(numeric) ? numeric : undefined;
+            const numeric = coerceNumber(activityClone.cost_estimate);
+            activityClone.cost_estimate = typeof numeric === "number" ? numeric : undefined;
           }
 
           return activityClone;
@@ -71,8 +95,8 @@ function normalizeItineraryPayload(payload: unknown) {
     costKeys.forEach((key) => {
       const value = breakdownClone[key];
       if (value != null) {
-        const numeric = Number(value);
-        breakdownClone[key] = Number.isFinite(numeric) ? numeric : undefined;
+        const numeric = coerceNumber(value);
+        breakdownClone[key] = typeof numeric === "number" ? numeric : undefined;
       }
     });
 

@@ -23,10 +23,14 @@ export function MapView({ markers }: MapViewProps) {
   const [ready, setReady] = useState(false);
 
   const config = useMemo(() => {
-    const center: [number, number] =
-      markers.length > 0 ? [markers[0].lng, markers[0].lat] : [116.397389, 39.908722];
+    const validMarkers = markers.filter((marker) =>
+      Number.isFinite(marker.lat) && Number.isFinite(marker.lng)
+    );
 
-    const data = markers.map((marker) => ({
+    const center: [number, number] =
+      validMarkers.length > 0 ? [validMarkers[0].lng, validMarkers[0].lat] : [116.397389, 39.908722];
+
+    const data = validMarkers.map((marker) => ({
       lng: marker.lng,
       lat: marker.lat,
       name: marker.label,
