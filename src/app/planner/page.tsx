@@ -6,6 +6,7 @@ import { VoiceRecorder } from "../../../ui/components/VoiceRecorder";
 import { MapView } from "../../../ui/components/MapView";
 import { ItineraryTimeline } from "../../../ui/components/ItineraryTimeline";
 import { usePlannerStore, mapMarkersSelector } from "../../../lib/store/usePlannerStore";
+import { DestinationGallery } from "../../../ui/components/DestinationGallery";
 
 const preferenceOptions = ["美食", "文化", "户外", "亲子", "夜生活", "艺术"];
 
@@ -98,11 +99,14 @@ export default function PlannerPage() {
   };
 
   return (
-    <section className="flex flex-col gap-8">
+    <section className="flex flex-col gap-10">
       <header className="space-y-3">
-        <h1 className="text-3xl font-semibold text-white">行程规划助手</h1>
-        <p className="text-slate-300">
-          输入你的出行需求，AI 将生成每日行程安排。你也可以通过语音补充偏好。
+        <span className="inline-flex items-center gap-2 rounded-full border border-slate-700/80 bg-slate-900/80 px-4 py-1 text-xs uppercase tracking-[0.3em] text-slate-300">
+          AI Powered
+        </span>
+        <h1 className="text-4xl font-semibold text-white md:text-5xl">行程规划助手</h1>
+        <p className="max-w-2xl text-slate-300">
+          输入目的地、行程偏好与预算，AI 将生成每日行程安排。也可以使用语音补充灵感，随后你可以在交互地图与时间线上探索每个地点。
         </p>
       </header>
 
@@ -194,7 +198,7 @@ export default function PlannerPage() {
         <div className="flex flex-col justify-between gap-4">
           <button
             type="submit"
-            className="rounded-lg bg-blue-600 px-4 py-2 text-white transition hover:bg-blue-500 disabled:bg-blue-300"
+            className="rounded-xl bg-gradient-to-r from-blue-600 via-indigo-500 to-purple-500 px-6 py-3 text-white shadow-lg transition hover:brightness-110 disabled:opacity-60"
             disabled={loading}
           >
             {loading ? "生成中..." : "生成行程"}
@@ -226,19 +230,32 @@ export default function PlannerPage() {
         </div>
       </form>
 
-      <section className="grid gap-6 md:grid-cols-2">
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-4">
-          <h2 className="mb-3 text-lg font-semibold text-white">行程地图</h2>
+      <section className="grid gap-6 lg:grid-cols-[1.4fr_1fr]">
+        <div className="space-y-4 rounded-3xl border border-slate-800 bg-slate-900/80 p-4 shadow-xl">
+          <header className="flex items-center justify-between">
+            <h2 className="text-xl font-semibold text-white">互动地图</h2>
+            <span className="text-xs text-slate-400">拖动缩放以查看每日地点</span>
+          </header>
           {markers.length === 0 ? (
-            <p className="text-sm text-slate-400">生成行程后将自动标记地点。</p>
+            <div className="flex h-[320px] flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-slate-700/80 bg-slate-950/60 p-6 text-center text-sm text-slate-400">
+              <span className="text-base font-medium text-slate-300">生成行程后，将基于每日活动自动打点。</span>
+              <span>填写表单并提交即可在此处浏览行程地点。</span>
+            </div>
           ) : (
             <MapView markers={markers} />
           )}
         </div>
 
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-4">
-          <h2 className="mb-3 text-lg font-semibold text-white">日程时间线</h2>
-          <ItineraryTimeline itinerary={result} />
+        <div className="space-y-4">
+          <div className="rounded-3xl border border-slate-800 bg-slate-900/80 p-4 shadow-xl">
+            <header className="mb-3 flex items-center justify-between">
+              <h2 className="text-xl font-semibold text-white">日程时间线</h2>
+              <span className="text-xs text-slate-400">按天查看详细安排</span>
+            </header>
+            <ItineraryTimeline itinerary={result} />
+          </div>
+
+          <DestinationGallery />
         </div>
       </section>
     </section>

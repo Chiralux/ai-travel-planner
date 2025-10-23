@@ -47,6 +47,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, data: result });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown ASR error";
+    console.error("[ASR] recognition failed", error);
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
 }

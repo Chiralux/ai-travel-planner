@@ -51,7 +51,7 @@ export class QwenClient implements LLMClient {
         Authorization: `Bearer ${apiKey}`
       },
       body: JSON.stringify({
-        model: "qwen-plus",
+        model: "qwen3-max",
         temperature: 0.25,
         response_format: { type: "json_object" },
         messages: [
