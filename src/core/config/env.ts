@@ -5,6 +5,8 @@ const envSchema = z.object({
   NEXT_PUBLIC_APP_NAME: z.string().default("AI Travel Planner"),
   NEXT_PUBLIC_AMAP_WEB_KEY: z.string().optional(),
   AMAP_REST_KEY: z.string().optional(),
+  BAIDU_MAP_AK: z.string().optional(),
+  MAPS_PROVIDER: z.string().optional(),
   AI_PROVIDER: z.string().optional(),
   ALIYUN_DASHSCOPE_API_KEY: z.string().optional(),
   IFLYTEK_APP_ID: z.string().optional(),
