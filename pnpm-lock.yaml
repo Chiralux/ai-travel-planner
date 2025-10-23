@@ -60,6 +60,9 @@ importers:
         specifier: ^4.5.4
         version: 4.5.7(@types/react@18.3.26)(react@18.3.1)
     devDependencies:
+      '@types/cross-spawn':
+        specifier: ^6.0.6
+        version: 6.0.6
       '@types/node':
         specifier: ^20.16.5
         version: 20.19.23
@@ -705,6 +708,9 @@ packages:
 
   '@turf/union@6.5.0':
     resolution: {integrity: sha512-igYWCwP/f0RFHIlC2c0SKDuM/ObBaqSljI3IdV/x71805QbIvY/BYGcJdyNcgEA6cylIGl/0VSlIbpJHZ9ldhw==}
+
+  '@types/cross-spawn@6.0.6':
+    resolution: {integrity: sha512-fXRhhUkG4H3TQk5dBhQ7m/JDdSNHKwR2BBia62lhwEIq9xGiQKLxd6LymNhn47SjXhsUEPmxi+PKw2OkW4LLjA==}
 
   '@types/estree@1.0.8':
     resolution: {integrity: sha512-dWHzHa2WqEXI/O1E9OjrocMTKJl2mSrEolh1Iomrv6U+JuNwaHXsXx9bLu5gG7BUWFIN0skIQJQ/L1rIex4X6w==}
@@ -2822,6 +2828,10 @@ snapshots:
       '@turf/helpers': 6.5.0
       '@turf/invariant': 6.5.0
       polygon-clipping: 0.15.7
+
+  '@types/cross-spawn@6.0.6':
+    dependencies:
+      '@types/node': 20.19.23
 
   '@types/estree@1.0.8': {}
 
