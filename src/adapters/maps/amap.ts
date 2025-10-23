@@ -50,11 +50,13 @@ export class AMapClient implements MapsClient {
       keywords: query,
       page_size: "1",
       page_num: "1",
-      output: "JSON"
+      output: "JSON",
+      sortrule: "weight"
     });
 
     if (cityOrDestination) {
       params.set("region", cityOrDestination);
+      params.set("city", cityOrDestination);
     }
 
     try {
@@ -99,7 +101,17 @@ export class AMapClient implements MapsClient {
       }
 
       try {
-        const place = await this.geocode(activity.title, destination);
+        const searchTerms = this.buildSearchTerms(destination, activity.title, activity.address, activity.note);
+
+        let place: Place | null = null;
+
+        for (const term of searchTerms) {
+          place = await this.geocode(term, destination);
+
+          if (place) {
+            break;
+          }
+        }
 
         if (place) {
           enriched.push({
@@ -118,5 +130,50 @@ export class AMapClient implements MapsClient {
     }
 
     return enriched;
+  }
+
+  private buildSearchTerms(
+    destination: string,
+    title?: string,
+    address?: string,
+    note?: string
+  ): string[] {
+    const terms = new Set<string>();
+
+    const clean = (value?: string) => value?.trim();
+    const cleanedDestination = clean(destination);
+    const cleanedTitle = clean(title);
+    const cleanedAddress = clean(address);
+    const cleanedNote = clean(note);
+
+    if (cleanedTitle && cleanedAddress) {
+      terms.add(`${cleanedTitle} ${cleanedAddress}`);
+    }
+
+    if (cleanedDestination && cleanedAddress) {
+      terms.add(`${cleanedDestination} ${cleanedAddress}`);
+    }
+
+    if (cleanedDestination && cleanedTitle) {
+      terms.add(`${cleanedDestination} ${cleanedTitle}`);
+    }
+
+    if (cleanedTitle && cleanedNote) {
+      terms.add(`${cleanedTitle} ${cleanedNote}`);
+    }
+
+    if (cleanedAddress) {
+      terms.add(cleanedAddress);
+    }
+
+    if (cleanedTitle) {
+      terms.add(cleanedTitle);
+    }
+
+    if (cleanedNote) {
+      terms.add(cleanedNote);
+    }
+
+    return Array.from(terms);
   }
 }
