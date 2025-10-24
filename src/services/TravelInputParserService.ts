@@ -98,23 +98,22 @@ export class TravelInputParserService {
     }
 
     const heuristic = localParseTravelInput(cleaned, options);
-    const missingFields = !heuristic || [
-      heuristic.destination,
-      heuristic.origin,
-      heuristic.days,
-      heuristic.budget,
-      heuristic.partySize,
-      heuristic.preferences?.length
-    ].some((value) => value == null || value === 0);
 
-    if (!missingFields) {
-      return heuristic;
+    try {
+      const llmResult = await this.callLLM(cleaned, options.knownPreferences ?? [], heuristic);
+      const normalized = normalizeLLMResult(llmResult);
+      const merged = mergeResults(heuristic, normalized);
+      if (merged) {
+        return merged;
+      }
+      if (normalized && Object.keys(normalized).length > 0) {
+        return normalized as ParsedTravelInput;
+      }
+    } catch (error) {
+      console.warn("TravelInputParserService: LLM parse failed, falling back to heuristic", error);
     }
 
-    const llmResult = await this.callLLM(cleaned, options.knownPreferences ?? [], heuristic);
-    const normalized = normalizeLLMResult(llmResult);
-
-    return mergeResults(heuristic, normalized);
+    return heuristic ?? null;
   }
 
   private async callLLM(
