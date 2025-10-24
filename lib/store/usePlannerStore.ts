@@ -66,16 +66,40 @@ export const mapMarkersSelector = (state: PlannerState) => {
     address?: string;
   }> = [];
 
+  const normalizeCoords = (lat?: number, lng?: number): { lat: number; lng: number } | null => {
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      return null;
+    }
+
+    let normalizedLat = lat as number;
+    let normalizedLng = lng as number;
+
+    const absLat = Math.abs(normalizedLat);
+    const absLng = Math.abs(normalizedLng);
+
+    if (absLat > 90 && absLng <= 90) {
+      [normalizedLat, normalizedLng] = [normalizedLng, normalizedLat];
+    }
+
+    if (Math.abs(normalizedLat) > 90 || Math.abs(normalizedLng) > 180) {
+      return null;
+    }
+
+    return { lat: normalizedLat, lng: normalizedLng };
+  };
+
   if (!state.result) {
     return markers;
   }
 
   for (const day of state.result.daily_plan) {
     for (const activity of day.activities) {
-      if (typeof activity.lat === "number" && typeof activity.lng === "number") {
+      const coords = normalizeCoords(activity.lat, activity.lng);
+
+      if (coords) {
         markers.push({
-          lat: activity.lat,
-          lng: activity.lng,
+          lat: coords.lat,
+          lng: coords.lng,
           label: activity.title,
           address: activity.address
         });
