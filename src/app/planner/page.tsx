@@ -236,13 +236,14 @@ export default function PlannerPage() {
             <h2 className="text-xl font-semibold text-white">互动地图</h2>
             <span className="text-xs text-slate-400">拖动缩放以查看每日地点</span>
           </header>
-          {markers.length === 0 ? (
-            <div className="flex h-[320px] flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-slate-700/80 bg-slate-950/60 p-6 text-center text-sm text-slate-400">
-              <span className="text-base font-medium text-slate-300">生成行程后，将基于每日活动自动打点。</span>
-              <span>填写表单并提交即可在此处浏览行程地点。</span>
-            </div>
-          ) : (
+          <div className="relative h-80">
             <MapView markers={markers} />
+          </div>
+          {markers.length === 0 && (
+            <div className="rounded-2xl border border-dashed border-slate-700/80 bg-slate-950/60 p-4 text-center text-sm text-slate-400">
+              <p className="text-base font-medium text-slate-300">填写表单并生成行程后，将基于每日活动自动打点。</p>
+              <p>当前展示的是底图，你仍然可以拖动或缩放查看城市概览。</p>
+            </div>
           )}
         </div>
 

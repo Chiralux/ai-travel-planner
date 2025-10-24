@@ -1,7 +1,6 @@
 "use client";
 
-import dynamic from "next/dynamic";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type Marker = {
   lat: number;
@@ -14,65 +13,217 @@ type MapViewProps = {
   markers: Marker[];
 };
 
-const DotMap = dynamic(async () => (await import("@ant-design/maps")).DotMap, {
-  ssr: false,
-  loading: () => <div className="flex h-64 items-center justify-center text-slate-400">地图加载中...</div>
-});
+declare global {
+  interface Window {
+    AMap?: any;
+    _AMapSecurityConfig?: {
+      securityJsCode?: string;
+    };
+  }
+}
+
+const DEFAULT_CENTER: [number, number] = [116.397389, 39.908722];
+const DEFAULT_ZOOM_EMPTY = 3;
+
+const isDev = process.env.NODE_ENV !== "production";
+const debug = (...args: unknown[]) => {
+  if (isDev && typeof console !== "undefined") {
+    console.log("[MapView]", ...args);
+  }
+};
+
+function escapeHtml(input: string): string {
+  return input.replace(/[&<>'"]/g, (match) => {
+    const table: Record<string, string> = {
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      "'": "&#39;",
+      '"': "&quot;"
+    };
+
+    return table[match] ?? match;
+  });
+}
+
+function buildInfoContent(marker: Marker): string {
+  const title = escapeHtml(marker.label);
+  const address = marker.address ? escapeHtml(marker.address) : null;
+
+  return [`<strong style="display:block;color:#111827;">${title}</strong>`, address ? `<span style="color:#4b5563;">${address}</span>` : ""]
+    .filter(Boolean)
+    .join("");
+}
 
 export function MapView({ markers }: MapViewProps) {
-  const [ready, setReady] = useState(false);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const mapRef = useRef<any>(null);
+  const infoWindowRef = useRef<any>(null);
+  const markerInstancesRef = useRef<any[]>([]);
+  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
+  const hasMountedRef = useRef(false);
 
-  const config = useMemo(() => {
-    const validMarkers = markers.filter((marker) =>
-      Number.isFinite(marker.lat) && Number.isFinite(marker.lng)
-    );
-
-    const center: [number, number] =
-      validMarkers.length > 0 ? [validMarkers[0].lng, validMarkers[0].lat] : [116.397389, 39.908722];
-
-    const data = validMarkers.map((marker) => ({
-      lng: marker.lng,
-      lat: marker.lat,
-      name: marker.label,
-      address: marker.address
-    }));
-
-    return {
-      map: {
-        type: "amap" as const,
-        style: "blank",
-        center,
-        zoom: markers.length > 0 ? 12 : 3,
-        pitch: 0
-      },
-      autoFit: markers.length > 0,
-      source: {
-        data,
-        parser: {
-          type: "json",
-          x: "lng",
-          y: "lat"
-        }
-      },
-      size: 12,
-      color: "#f97316",
-      shape: "circle",
-      tooltip: {
-        items: ["name", "address"]
-      },
-      state: {
-        active: true
-      }
-    };
-  }, [markers]);
+  const token = useMemo(() => process.env.NEXT_PUBLIC_AMAP_WEB_KEY, []);
+  const securityCode = useMemo(() => process.env.NEXT_PUBLIC_AMAP_SECURITY_JS_CODE, []);
+  const validMarkers = useMemo(
+    () => markers.filter((marker) => Number.isFinite(marker.lat) && Number.isFinite(marker.lng)),
+    [markers]
+  );
+  const [sdkReady, setSdkReady] = useState(false);
 
   useEffect(() => {
-    setReady(true);
-  }, []);
+    async function initMap() {
+      if (!containerRef.current) {
+        debug("initMap: missing container element");
+        return;
+      }
 
-  if (!ready) {
-    return <div className="flex h-64 items-center justify-center text-slate-400">地图初始化中...</div>;
+      if (!token) {
+        debug("initMap: NEXT_PUBLIC_AMAP_WEB_KEY not set");
+        setStatus("error");
+        return;
+      }
+
+      try {
+        if (typeof window === "undefined") {
+          debug("initMap: running during SSR, skipping");
+          return;
+        }
+
+        debug("initMap: loading SDK", { hasSecurityCode: Boolean(securityCode) });
+        const { default: AMapLoader } = await import("@amap/amap-jsapi-loader");
+
+        if (securityCode) {
+          window._AMapSecurityConfig = {
+            securityJsCode: securityCode
+          };
+          debug("initMap: applied security config");
+        }
+
+        const AMap = (await AMapLoader.load({
+          key: token,
+          version: "2.0",
+          plugins: ["AMap.ToolBar", "AMap.Scale"]
+        })) as typeof window.AMap;
+
+        if (typeof window !== "undefined") {
+          window.AMap = AMap;
+        }
+
+        if (!AMap || typeof AMap.Map !== "function") {
+          debug("initMap: invalid SDK response", { AMapType: typeof AMap });
+          throw new Error("AMap SDK failed to load");
+        }
+
+        const map = new AMap.Map(containerRef.current, {
+          center: DEFAULT_CENTER,
+          zoom: DEFAULT_ZOOM_EMPTY,
+          mapStyle: "amap://styles/normal",
+          viewMode: "2D",
+          resizeEnable: true
+        });
+
+        debug("initMap: map created", { zoom: DEFAULT_ZOOM_EMPTY });
+
+        if (AMap.ToolBar) {
+          map.addControl(new AMap.ToolBar());
+        }
+        if (AMap.Scale) {
+          map.addControl(new AMap.Scale());
+        }
+
+        mapRef.current = map;
+        infoWindowRef.current = new AMap.InfoWindow({ offset: new AMap.Pixel(0, -28) });
+
+        debug("initMap: map ready, markers", validMarkers.length);
+        setStatus("ready");
+        setSdkReady(true);
+        hasMountedRef.current = true;
+      } catch (error) {
+        debug("initMap: error", error);
+        setStatus("error");
+      }
+    }
+
+    initMap();
+
+    return () => {
+      markerInstancesRef.current.forEach((marker) => marker.setMap(null));
+      markerInstancesRef.current = [];
+      infoWindowRef.current?.close?.();
+      infoWindowRef.current = null;
+      mapRef.current?.destroy?.();
+      mapRef.current = null;
+      setSdkReady(false);
+      debug("cleanup: disposed map");
+    };
+  }, [token, securityCode]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const AMapCtor = typeof window !== "undefined" && sdkReady ? window.AMap : undefined;
+
+    if (!map || status !== "ready" || !AMapCtor) {
+      debug("markers effect: waiting", { hasMap: Boolean(map), status, hasSDK: Boolean(AMapCtor) });
+      return;
+    }
+
+    markerInstancesRef.current.forEach((marker) => marker.setMap(null));
+    markerInstancesRef.current = [];
+
+    if (validMarkers.length === 0) {
+      infoWindowRef.current?.close?.();
+      map.setZoomAndCenter(DEFAULT_ZOOM_EMPTY, DEFAULT_CENTER);
+      debug("markers effect: cleared markers");
+      return;
+    }
+
+    debug("markers effect: rendering markers", { count: validMarkers.length });
+    const overlays = validMarkers.map((marker) => {
+      const overlay = new AMapCtor.Marker({
+        position: [marker.lng, marker.lat],
+        title: marker.label
+      });
+
+      if (infoWindowRef.current) {
+        const content = buildInfoContent(marker);
+        overlay.on("mouseover", () => {
+          infoWindowRef.current.setContent(content);
+          infoWindowRef.current.open(map, overlay.getPosition());
+        });
+        overlay.on("mouseout", () => {
+          infoWindowRef.current.close();
+        });
+      }
+
+      overlay.setMap(map);
+      return overlay;
+    });
+
+    markerInstancesRef.current = overlays;
+
+    if (overlays.length > 0) {
+      map.setFitView(overlays);
+      debug("markers effect: fit view");
+    }
+  }, [validMarkers, status, sdkReady]);
+
+  if (status === "error") {
+    return (
+      <div className="flex h-80 items-center justify-center rounded-2xl border border-slate-800 bg-slate-950/70 text-sm text-slate-400">
+        地图加载失败，请检查 API Key 配置。
+      </div>
+    );
   }
 
-  return <DotMap {...config} containerStyle={{ height: 320, borderRadius: 12 }} />;
+  return (
+    <div className="relative h-80 overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/60" aria-label="互动地图">
+      <div ref={containerRef} className="h-full w-full" style={{ minHeight: "320px" }} />
+      {status === "loading" && (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-slate-400">
+          地图加载中...
+        </div>
+      )}
+    </div>
+  );
 }
