@@ -29,6 +29,57 @@ function coerceNumber(value: unknown): number | undefined {
   return undefined;
 }
 
+const COST_FALLBACK_BY_KIND: Record<string, number> = {
+  food: 80,
+  transport: 40,
+  hotel: 480,
+  other: 60
+};
+
+const PAID_SIGHT_KEYWORDS = [
+  /博物馆/,
+  /美术馆/,
+  /景区/,
+  /乐园/,
+  /水族馆/,
+  /动物园/,
+  /剧院/,
+  /演出/,
+  /游船/,
+  /观景/,
+  /摩天轮/,
+  /登塔/,
+  /灯光秀/
+];
+
+function roundUpToNearestTen(value: number): number {
+  return Math.ceil(value / 10) * 10;
+}
+
+function sanitizeCostEstimate(kindRaw: unknown, titleRaw: unknown, rawCost: unknown): number | undefined {
+  const kind = typeof kindRaw === "string" ? kindRaw.toLowerCase() : undefined;
+  const title = typeof titleRaw === "string" ? titleRaw : "";
+  const numeric = coerceNumber(rawCost);
+
+  if (typeof numeric === "number" && numeric > 0) {
+    return roundUpToNearestTen(numeric);
+  }
+
+  if (kind === "sight") {
+    const requiresTicket = PAID_SIGHT_KEYWORDS.some((pattern) => pattern.test(title));
+    if (requiresTicket) {
+      return COST_FALLBACK_BY_KIND.other;
+    }
+    return undefined;
+  }
+
+  if (kind && COST_FALLBACK_BY_KIND[kind] != null) {
+    return COST_FALLBACK_BY_KIND[kind];
+  }
+
+  return undefined;
+}
+
 function normalizeItineraryPayload(payload: unknown) {
   if (!payload || typeof payload !== "object") {
     return payload;
@@ -70,10 +121,12 @@ function normalizeItineraryPayload(payload: unknown) {
             ...(activity as Record<string, unknown>)
           };
 
-          if (activityClone.cost_estimate != null) {
-            const numeric = coerceNumber(activityClone.cost_estimate);
-            activityClone.cost_estimate = typeof numeric === "number" ? numeric : undefined;
-          }
+          const sanitizedCost = sanitizeCostEstimate(
+            activityClone.kind,
+            activityClone.title,
+            activityClone.cost_estimate
+          );
+          activityClone.cost_estimate = sanitizedCost;
 
           return activityClone;
         });

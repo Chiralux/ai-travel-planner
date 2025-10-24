@@ -4,6 +4,7 @@ import type { Activity } from "../../core/validation/itinerarySchema";
 import { requestJson } from "./shared";
 
 const AMAP_TEXT_ENDPOINT = "https://restapi.amap.com/v5/place/text";
+const CHINESE_CHAR_REGEX = /[\u4e00-\u9fff]/;
 
 type AMapPoi = {
   name?: string;
@@ -114,11 +115,18 @@ export class AMapClient implements MapsClient {
         }
 
         if (place) {
+          const originalTitle = activity.title ?? "";
+          const placeName = typeof place.name === "string" ? place.name : undefined;
+          const usePlaceName = !CHINESE_CHAR_REGEX.test(originalTitle) && placeName && CHINESE_CHAR_REGEX.test(placeName);
+          const nextTitle = usePlaceName && placeName ? placeName : originalTitle;
+          const nextAddress = activity.address ?? place.address;
+
           enriched.push({
             ...activity,
             lat: activity.lat ?? place.lat,
             lng: activity.lng ?? place.lng,
-            address: activity.address ?? place.address
+            address: nextAddress,
+            title: nextTitle
           });
           continue;
         }
