@@ -7,6 +7,11 @@ type PlannerForm = {
   budget?: number;
   partySize?: number;
   preferences: string[];
+  origin?: string;
+  originCoords?: {
+    lat: number;
+    lng: number;
+  };
 };
 
 type PlannerState = {
@@ -81,6 +86,14 @@ export const mapMarkersSelector = (state: PlannerState) => {
     label: string;
     address?: string;
   }> = [];
+
+  if (state.form.originCoords) {
+    markers.push({
+      lat: state.form.originCoords.lat,
+      lng: state.form.originCoords.lng,
+      label: state.form.origin ? `出发地：${state.form.origin}` : "出发地"
+    });
+  }
 
   const normalizeCoords = (lat?: number, lng?: number): { lat: number; lng: number } | null => {
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) {

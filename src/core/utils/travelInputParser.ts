@@ -26,6 +26,7 @@ export type ParsedTravelInput = {
   budget?: number;
   partySize?: number;
   preferences?: string[];
+  origin?: string;
 };
 
 const preferenceSynonyms: Record<string, string> = {
@@ -123,6 +124,23 @@ function extractDestination(text: string): string | undefined {
   const patterns = [
     /(?:去|到|想去|想到|计划去)([\u4e00-\u9fa5A-Za-z]{2,20})/,
     /目的地(?:是|为)?([\u4e00-\u9fa5A-Za-z]{2,20})/
+  ];
+
+  for (const pattern of patterns) {
+    const match = cleaned.match(pattern);
+    if (match?.[1]) {
+      return match[1];
+    }
+  }
+
+  return undefined;
+}
+
+function extractOrigin(text: string): string | undefined {
+  const cleaned = text.replace(/\s+/g, "");
+  const patterns = [
+    /(?:从|自)([\u4e00-\u9fa5A-Za-z]{2,20})(?:出发|启程)/,
+    /出发地(?:是|为)?([\u4e00-\u9fa5A-Za-z]{2,20})/
   ];
 
   for (const pattern of patterns) {
@@ -241,17 +259,19 @@ export function parseTravelInput(
   }
 
   const destination = extractDestination(cleaned);
+  const origin = extractOrigin(cleaned);
   const days = extractDays(cleaned);
   const budget = extractBudget(cleaned);
   const partySize = extractPartySize(cleaned);
   const preferences = extractPreferences(cleaned, options.knownPreferences ?? []);
 
-  if (!destination && !days && !budget && !partySize && preferences.length === 0) {
+  if (!destination && !origin && !days && !budget && !partySize && preferences.length === 0) {
     return null;
   }
 
   return {
     destination,
+    origin,
     days,
     budget,
     partySize,
@@ -265,6 +285,11 @@ type PlannerFormLike = {
   budget?: number;
   partySize?: number;
   preferences: string[];
+  origin?: string;
+  originCoords?: {
+    lat: number;
+    lng: number;
+  };
 };
 
 type PlannerStoreLike = {
@@ -278,6 +303,9 @@ export function mergeParsedInput(
 ) {
   if (parsed.destination) {
     store.setField("destination", parsed.destination);
+  }
+  if (parsed.origin) {
+    store.setField("origin", parsed.origin);
   }
   if (typeof parsed.days === "number") {
     store.setField("days", Math.max(1, parsed.days));

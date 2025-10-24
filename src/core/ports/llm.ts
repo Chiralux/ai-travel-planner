@@ -11,6 +11,11 @@ export type GenerateItineraryInput = {
   budget?: number;
   partySize?: number;
   preferences?: string[];
+  origin?: string;
+  originCoords?: {
+    lat: number;
+    lng: number;
+  };
   specialNotes?: string;
   fallback?: Partial<Itinerary>;
   userApiKey?: string;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { VoiceRecorder } from "../../../ui/components/VoiceRecorder";
 import { MapView } from "../../../ui/components/MapView";
@@ -41,6 +41,9 @@ export default function PlannerPage() {
   const [voiceMessage, setVoiceMessage] = useState<string | null>(null);
   const [smartInput, setSmartInput] = useState<string>("");
   const [smartInputMessage, setSmartInputMessage] = useState<string | null>(null);
+  const [locating, setLocating] = useState(false);
+  const [locationStatus, setLocationStatus] = useState<string | null>(null);
+  const hasTriedLocateRef = useRef(false);
 
   const knownPreferences = useMemo(
     () => Array.from(new Set([...preferenceOptions, ...form.preferences])),
@@ -101,6 +104,82 @@ export default function PlannerPage() {
     [setFocusedMarker]
   );
 
+  const detectCurrentOrigin = useCallback(async () => {
+    if (locating) {
+      return;
+    }
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      setLocationStatus("当前浏览器不支持定位，您可以手动填写出发地。");
+      return;
+    }
+
+    setLocating(true);
+    setLocationStatus("正在定位当前出发地...");
+
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const { latitude, longitude } = position.coords;
+
+        setField("originCoords", { lat: latitude, lng: longitude });
+
+        try {
+          const params = new URLSearchParams({ lat: String(latitude), lng: String(longitude) });
+          const response = await fetch(`/api/geocode/reverse?${params.toString()}`);
+          const json = await response.json();
+
+          if (response.ok && json.ok) {
+            const label = json.data?.label ?? "当前位置";
+            setField("origin", label);
+            setLocationStatus(`已定位：${label}`);
+          } else {
+            const fallbackLabel = `当前位置 (${latitude.toFixed(4)}, ${longitude.toFixed(4)})`;
+            setField("origin", fallbackLabel);
+            setLocationStatus("定位成功，但无法识别城市名称，可手动调整。");
+          }
+        } catch (error) {
+          console.error("Failed to reverse geocode", error);
+          const fallbackLabel = `当前位置 (${latitude.toFixed(4)}, ${longitude.toFixed(4)})`;
+          setField("origin", fallbackLabel);
+          setLocationStatus("定位成功，但地理名称获取失败，可手动调整。");
+        } finally {
+          setLocating(false);
+        }
+      },
+      (error) => {
+        console.warn("Geolocation failed", error);
+        setLocating(false);
+        switch (error.code) {
+          case error.PERMISSION_DENIED:
+            setLocationStatus("未获得定位权限，请手动填写出发地。");
+            break;
+          case error.POSITION_UNAVAILABLE:
+            setLocationStatus("无法获取位置信息，请检查定位服务。");
+            break;
+          case error.TIMEOUT:
+            setLocationStatus("定位超时，请重试或手动填写。");
+            break;
+          default:
+            setLocationStatus("定位失败，请重试或手动填写出发地。");
+        }
+      },
+      { enableHighAccuracy: false, timeout: 1000 * 15, maximumAge: 1000 * 60 * 5 }
+    );
+  }, [locating, setField]);
+
+  useEffect(() => {
+    if (hasTriedLocateRef.current) {
+      return;
+    }
+    hasTriedLocateRef.current = true;
+
+    if (form.origin && form.origin.trim().length > 0) {
+      setLocationStatus(`出发地：${form.origin}`);
+      return;
+    }
+
+    void detectCurrentOrigin();
+  }, [detectCurrentOrigin, form.origin]);
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
@@ -118,7 +197,9 @@ export default function PlannerPage() {
       days: Number(form.days) || 1,
       budget: form.budget,
       partySize: form.partySize,
-      preferences: form.preferences
+      preferences: form.preferences,
+      origin: form.origin?.trim() || undefined,
+      originCoords: form.originCoords
     };
 
     try {
@@ -220,6 +301,34 @@ export default function PlannerPage() {
           </div>
 
           <label className="flex flex-col gap-2">
+            <span className="text-sm font-medium text-slate-200">出发地</span>
+            <div className="flex flex-wrap gap-2">
+              <input
+                type="text"
+                value={form.origin ?? ""}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  setField("origin", value);
+                  setLocationStatus(value.trim().length > 0 ? `出发地：${value.trim()}` : "您可以定位或填写出发地");
+                }}
+                className="flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 focus:border-blue-500 focus:outline-none"
+                placeholder="定位或手动填写出发地"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  void detectCurrentOrigin();
+                }}
+                className="rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-200 transition hover:border-blue-500 hover:text-blue-300"
+                disabled={locating}
+              >
+                {locating ? "定位中..." : "重新定位"}
+              </button>
+            </div>
+            {locationStatus && <p className="text-xs text-slate-400">{locationStatus}</p>}
+          </label>
+
+          <label className="flex flex-col gap-2">
             <span className="text-sm font-medium text-slate-200">目的地</span>
             <input
               type="text"
@@ -315,6 +424,12 @@ export default function PlannerPage() {
 
           {result ? (
             <div className="space-y-3 text-sm text-slate-300">
+              {form.origin && (
+                <div>
+                  <span className="font-semibold text-white">出发地：</span>
+                  {form.origin}
+                </div>
+              )}
               <div>
                 <span className="font-semibold text-white">目的地：</span>
                 {result.destination}（共 {result.days} 天）

@@ -19,7 +19,14 @@ export const itineraryInputSchema = z.object({
   days: z.number().int().positive("Days must be positive"),
   budget: z.number().nonnegative().optional(),
   partySize: z.number().int().positive().optional(),
-  preferences: z.array(z.string().min(1)).optional()
+  preferences: z.array(z.string().min(1)).optional(),
+  origin: z.string().min(1).optional(),
+  originCoords: z
+    .object({
+      lat: z.number(),
+      lng: z.number()
+    })
+    .optional()
 });
 
 function resolveLLMClient(provider: string) {
@@ -62,7 +69,9 @@ export const appRouter = t.router({
       days: input.days,
       budget: input.budget,
       partySize: input.partySize,
-      preferences: input.preferences
+      preferences: input.preferences,
+      origin: input.origin,
+      originCoords: input.originCoords
     };
 
     return ctx.itineraryService.generate(payload);
