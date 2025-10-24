@@ -282,6 +282,10 @@ export default function PlannerPage() {
         body: JSON.stringify(payload)
       });
 
+      if (response.status >= 500) {
+        window.alert("生成失败，请重试。");
+      }
+
       const json = await response.json();
 
       if (!response.ok || !json.ok) {
