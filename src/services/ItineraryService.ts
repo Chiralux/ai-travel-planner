@@ -2,7 +2,7 @@ import { createHash } from "crypto";
 import Redis from "ioredis";
 import type { MapsClient } from "../core/ports/maps";
 import type { LLMClient, GenerateItineraryInput } from "../core/ports/llm";
-import { itinerarySchema, type Itinerary } from "../core/validation/itinerarySchema";
+import { itinerarySchema, type BudgetBreakdown, type Itinerary } from "../core/validation/itinerarySchema";
 import { loadEnv } from "../core/config/env";
 
 const CACHE_PREFIX = "itinerary";
@@ -18,6 +18,77 @@ type ItineraryServiceDeps = {
   llm: LLMClient;
   maps: MapsClient;
 };
+
+type BudgetAccumulator = {
+  total: number;
+  accommodation: number;
+  transport: number;
+  food: number;
+  activities: number;
+  other: number;
+};
+
+function computeBudgetFromActivities(dailyPlan: Itinerary["daily_plan"]): BudgetAccumulator {
+  const totals: BudgetAccumulator = {
+    total: 0,
+    accommodation: 0,
+    transport: 0,
+    food: 0,
+    activities: 0,
+    other: 0
+  };
+
+  for (const day of dailyPlan) {
+    for (const activity of day.activities) {
+      if (activity.cost_estimate == null) {
+        continue;
+      }
+
+      const numericCost = Number(activity.cost_estimate);
+
+      if (!Number.isFinite(numericCost) || numericCost < 0) {
+        continue;
+      }
+
+      totals.total += numericCost;
+
+      switch (activity.kind) {
+        case "hotel":
+          totals.accommodation += numericCost;
+          break;
+        case "transport":
+          totals.transport += numericCost;
+          break;
+        case "food":
+          totals.food += numericCost;
+          break;
+        case "sight":
+          totals.activities += numericCost;
+          break;
+        default:
+          totals.other += numericCost;
+          break;
+      }
+    }
+  }
+
+  return totals;
+}
+
+function mergeBudgetBreakdown(itinerary: Itinerary, totals: BudgetAccumulator): BudgetBreakdown {
+  const baseBreakdown = itinerary.budget_breakdown ?? { currency: "CNY", total: 0 };
+
+  return {
+    ...baseBreakdown,
+    currency: baseBreakdown.currency ?? "CNY",
+    total: totals.total,
+    accommodation: totals.accommodation,
+    transport: totals.transport,
+    food: totals.food,
+    activities: totals.activities,
+    other: totals.other
+  };
+}
 
 export class ItineraryService {
   private readonly llm: LLMClient;
@@ -59,7 +130,7 @@ export class ItineraryService {
     const generated = await this.llm.generateItinerary(params);
     const validated = itinerarySchema.parse(generated);
 
-    const enrichedDailyPlan = [];
+  const enrichedDailyPlan: Itinerary["daily_plan"] = [];
 
     for (const day of validated.daily_plan) {
       try {
@@ -74,9 +145,14 @@ export class ItineraryService {
       }
     }
 
+    const budgetTotals = computeBudgetFromActivities(enrichedDailyPlan);
+    const nextBudgetBreakdown = mergeBudgetBreakdown(validated, budgetTotals);
+
     const finalItinerary: Itinerary = {
       ...validated,
-      daily_plan: enrichedDailyPlan
+      daily_plan: enrichedDailyPlan,
+      budget_estimate: budgetTotals.total,
+      budget_breakdown: nextBudgetBreakdown
     };
 
     if (this.redis) {
