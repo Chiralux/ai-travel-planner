@@ -7,6 +7,7 @@ type Marker = {
   lng: number;
   label: string;
   address?: string;
+  sequence?: number;
 };
 
 type MapViewProps = {
@@ -53,12 +54,60 @@ function escapeHtml(input: string): string {
 }
 
 function buildInfoContent(marker: Marker): string {
-  const title = escapeHtml(marker.label);
+  const titleText = marker.sequence != null ? `${marker.sequence}. ${marker.label}` : marker.label;
+  const title = escapeHtml(titleText);
   const address = marker.address ? escapeHtml(marker.address) : null;
 
   return [`<strong style="display:block;color:#111827;">${title}</strong>`, address ? `<span style="color:#4b5563;">${address}</span>` : ""]
     .filter(Boolean)
     .join("");
+}
+
+function createNumberedMarkerElement(sequence: number) {
+  if (typeof document === "undefined") {
+    return undefined;
+  }
+
+  const wrapper = document.createElement("div");
+  wrapper.style.position = "relative";
+  wrapper.style.width = "32px";
+  wrapper.style.height = "44px";
+  wrapper.style.display = "flex";
+  wrapper.style.alignItems = "center";
+  wrapper.style.justifyContent = "center";
+  wrapper.style.cursor = "pointer";
+
+  const circle = document.createElement("div");
+  circle.textContent = String(sequence);
+  circle.style.width = "30px";
+  circle.style.height = "30px";
+  circle.style.borderRadius = "9999px";
+  circle.style.background = "#2563eb";
+  circle.style.color = "#fff";
+  circle.style.display = "flex";
+  circle.style.alignItems = "center";
+  circle.style.justifyContent = "center";
+  circle.style.fontWeight = "600";
+  circle.style.fontSize = "13px";
+  circle.style.boxShadow = "0 6px 12px rgba(37, 99, 235, 0.45)";
+  circle.style.border = "2px solid #1d4ed8";
+  circle.style.marginBottom = "6px";
+
+  const pointer = document.createElement("div");
+  pointer.style.position = "absolute";
+  pointer.style.bottom = "0";
+  pointer.style.left = "50%";
+  pointer.style.transform = "translateX(-50%)";
+  pointer.style.width = "0";
+  pointer.style.height = "0";
+  pointer.style.borderLeft = "6px solid transparent";
+  pointer.style.borderRight = "6px solid transparent";
+  pointer.style.borderBottom = "8px solid #2563eb";
+
+  wrapper.appendChild(circle);
+  wrapper.appendChild(pointer);
+
+  return wrapper;
 }
 
 export function MapView({ markers, focusedMarker = null }: MapViewProps) {
@@ -186,10 +235,21 @@ export function MapView({ markers, focusedMarker = null }: MapViewProps) {
 
     debug("markers effect: rendering markers", { count: validMarkers.length });
     const instances = validMarkers.map((marker) => {
-      const overlay = new AMapCtor.Marker({
+      const markerTitle = marker.sequence != null ? `${marker.sequence}. ${marker.label}` : marker.label;
+      const options: Record<string, unknown> = {
         position: [marker.lng, marker.lat],
-        title: marker.label
-      });
+        title: markerTitle
+      };
+
+      if (marker.sequence != null) {
+        const contentEl = createNumberedMarkerElement(marker.sequence);
+        if (contentEl) {
+          options.content = contentEl;
+          options.offset = new AMapCtor.Pixel(-16, -44);
+        }
+      }
+
+      const overlay = new AMapCtor.Marker(options);
 
       if (infoWindowRef.current) {
         const content = buildInfoContent(marker);

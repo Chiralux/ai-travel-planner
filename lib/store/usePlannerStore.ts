@@ -85,6 +85,7 @@ export const mapMarkersSelector = (state: PlannerState) => {
     lng: number;
     label: string;
     address?: string;
+    sequence?: number;
   }> = [];
 
   if (state.form.originCoords) {
@@ -94,6 +95,8 @@ export const mapMarkersSelector = (state: PlannerState) => {
       label: state.form.origin ? `出发地：${state.form.origin}` : "出发地"
     });
   }
+
+  let sequence = 1;
 
   const normalizeCoords = (lat?: number, lng?: number): { lat: number; lng: number } | null => {
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
@@ -130,7 +133,8 @@ export const mapMarkersSelector = (state: PlannerState) => {
           lat: coords.lat,
           lng: coords.lng,
           label: activity.title,
-          address: activity.address
+          address: activity.address,
+          sequence: sequence++
         });
       }
     }
