@@ -49,6 +49,7 @@ const preferenceSynonyms: Record<string, string> = {
   "户外": "户外",
   "自然": "户外",
   "徒步": "户外",
+  "户外活动": "户外",
   "夜生活": "夜生活",
   "酒吧": "夜生活",
   "音乐": "夜生活",
@@ -160,33 +161,41 @@ function extractDays(text: string): number | undefined {
 }
 
 function extractBudget(text: string): number | undefined {
-  const budgetPattern = /预算[^\d一二三四五六七八九十两百千万]*([\d一二三四五六七八九十两百千万]+(?:\.\d+)?)(?:\s*)(万|千|百)?/;
-  const match = text.match(budgetPattern);
-  if (!match) {
-    return undefined;
+  const patterns = [
+    /预算[^\d一二三四五六七八九十两百千万]*([\d一二三四五六七八九十两百千万]+(?:\.\d+)?)(?:\s*)(万|千|百)?/, // explicit 预算
+    /(?:带了|带上|带着|携带|准备|有|存了|拿了|准备了|打算花|计划花|花|消费|用)(?:[^\d一二三四五六七八九十两百千万]{0,5})([\d一二三四五六七八九十两百千万]+(?:\.\d+)?)(?:\s*)(万|千|百)?(?:\s*)(?:元|块钱|块|人民币)/
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (!match) {
+      continue;
+    }
+
+    const base = normalizeNumber(match[1]);
+    if (typeof base !== "number") {
+      continue;
+    }
+
+    const unit = match[2];
+    if (unit === "万") {
+      return Math.round(base * 10000);
+    }
+    if (unit === "千") {
+      return Math.round(base * 1000);
+    }
+    if (unit === "百") {
+      return Math.round(base * 100);
+    }
+
+    return Math.round(base);
   }
 
-  const base = normalizeNumber(match[1]);
-  if (typeof base !== "number") {
-    return undefined;
-  }
-
-  const unit = match[2];
-  if (unit === "万") {
-    return Math.round(base * 10000);
-  }
-  if (unit === "千") {
-    return Math.round(base * 1000);
-  }
-  if (unit === "百") {
-    return Math.round(base * 100);
-  }
-
-  return Math.round(base);
+  return undefined;
 }
 
 function extractPartySize(text: string): number | undefined {
-  const match = text.match(/([\d一二三四五六七八九十两百千万]+)\s*(?:人|位|口)/);
+  const match = text.match(/([\d一二三四五六七八九十两百千万]+)\s*(?:个)?\s*(?:人|位|口)/);
   const value = normalizeNumber(match?.[1]);
   if (!value) {
     if (/一家三口/.test(text)) {

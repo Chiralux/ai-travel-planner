@@ -7,7 +7,7 @@ import { MapView } from "../../../ui/components/MapView";
 import { ItineraryTimeline } from "../../../ui/components/ItineraryTimeline";
 import { usePlannerStore, mapMarkersSelector } from "../../../lib/store/usePlannerStore";
 import { DestinationGallery } from "../../../ui/components/DestinationGallery";
-import { mergeParsedInput, parseTravelInput } from "../../core/utils/travelInputParser";
+import { mergeParsedInput, parseTravelInput as localParseTravelInput } from "../../core/utils/travelInputParser";
 
 const preferenceOptions = ["美食", "文化", "户外", "亲子", "夜生活", "艺术"];
 
@@ -43,6 +43,8 @@ export default function PlannerPage() {
   const [smartInputMessage, setSmartInputMessage] = useState<string | null>(null);
   const [locating, setLocating] = useState(false);
   const [locationStatus, setLocationStatus] = useState<string | null>(null);
+  const [parsing, setParsing] = useState(false);
+  const latestParseIdRef = useRef(0);
   const hasTriedLocateRef = useRef(false);
 
   const knownPreferences = useMemo(
@@ -51,50 +53,119 @@ export default function PlannerPage() {
   );
 
   const applyParsedInput = useCallback(
-    (text: string, source: "voice" | "text") => {
-      const parsed = parseTravelInput(text, { knownPreferences });
+    async (text: string, source: "voice" | "text") => {
+      const trimmed = text.trim();
 
-      if (!parsed) {
-        const base = source === "voice" ? "语音识别结果：" : "解析内容：";
-        const feedback = `${base}${text}\n未能识别出有效的行程信息，请尝试描述目的地、天数或预算。`;
-        if (source === "voice") {
-          setVoiceMessage(feedback);
-        } else {
-          setSmartInputMessage(feedback);
-        }
+      if (!trimmed) {
         return;
       }
 
-      mergeParsedInput({ form, setField }, parsed);
+      const setMessage = source === "voice" ? setVoiceMessage : setSmartInputMessage;
+      const parseId = ++latestParseIdRef.current;
 
-      const summaries: string[] = [];
-      if (parsed.destination) {
-        summaries.push(`目的地 ${parsed.destination}`);
-      }
-      if (parsed.days) {
-        summaries.push(`天数 ${parsed.days} 天`);
-      }
-      if (typeof parsed.budget === "number") {
-        summaries.push(`预算约 ¥${parsed.budget}`);
-      }
-      if (parsed.partySize) {
-        summaries.push(`同行 ${parsed.partySize} 人`);
-      }
-      if (parsed.preferences?.length) {
-        summaries.push(`偏好 ${parsed.preferences.join("、")}`);
-      }
+      setParsing(true);
+      setMessage(`${source === "voice" ? "语音识别结果" : "解析内容"}：${trimmed}\n正在解析...`);
 
-      const feedback = summaries.length
-        ? `${source === "voice" ? "语音识别结果" : "解析内容"}：${text}\n已识别：${summaries.join("，")}`
-        : `${source === "voice" ? "语音识别结果" : "解析内容"}：${text}`;
+      const requestBody = {
+        text: trimmed,
+        knownPreferences
+      };
 
-      if (source === "voice") {
-        setVoiceMessage(feedback);
-      } else {
-        setSmartInputMessage(feedback);
+      const finalize = (message: string | null) => {
+        if (latestParseIdRef.current === parseId) {
+          setMessage(message);
+          setParsing(false);
+        }
+      };
+
+      try {
+        const response = await fetch("/api/travel-input", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(requestBody)
+        });
+
+        const json = await response.json();
+
+        let parsed = json?.ok ? (json.data as ReturnType<typeof localParseTravelInput> | null) : null;
+
+        if (!parsed) {
+          parsed = localParseTravelInput(trimmed, { knownPreferences });
+        }
+
+        if (!parsed) {
+          finalize(`${source === "voice" ? "语音识别结果" : "解析内容"}：${trimmed}\n未能识别出有效的行程信息，请尝试描述目的地、天数或预算。`);
+          return;
+        }
+
+        mergeParsedInput({ form, setField }, parsed);
+
+        const summaries: string[] = [];
+        if (parsed.destination) {
+          summaries.push(`目的地 ${parsed.destination}`);
+        }
+        if (parsed.days) {
+          summaries.push(`天数 ${parsed.days} 天`);
+        }
+        if (typeof parsed.budget === "number") {
+          summaries.push(`预算约 ¥${parsed.budget}`);
+        }
+        if (parsed.partySize) {
+          summaries.push(`同行 ${parsed.partySize} 人`);
+        }
+        if (parsed.preferences?.length) {
+          summaries.push(`偏好 ${parsed.preferences.join("、")}`);
+        }
+        if (parsed.origin) {
+          summaries.push(`出发地 ${parsed.origin}`);
+        }
+
+        const feedback = summaries.length
+          ? `${source === "voice" ? "语音识别结果" : "解析内容"}：${trimmed}\n已识别：${summaries.join("，")}`
+          : `${source === "voice" ? "语音识别结果" : "解析内容"}：${trimmed}`;
+
+        finalize(feedback);
+      } catch (error) {
+        console.error("Failed to parse travel input", error);
+        const fallback = localParseTravelInput(trimmed, { knownPreferences });
+
+        if (!fallback) {
+          finalize(`${source === "voice" ? "语音识别结果" : "解析内容"}：${trimmed}\n解析失败，请稍后重试。`);
+          return;
+        }
+
+        mergeParsedInput({ form, setField }, fallback);
+
+        const summaries: string[] = [];
+        if (fallback.destination) {
+          summaries.push(`目的地 ${fallback.destination}`);
+        }
+        if (fallback.days) {
+          summaries.push(`天数 ${fallback.days} 天`);
+        }
+        if (typeof fallback.budget === "number") {
+          summaries.push(`预算约 ¥${fallback.budget}`);
+        }
+        if (fallback.partySize) {
+          summaries.push(`同行 ${fallback.partySize} 人`);
+        }
+        if (fallback.preferences?.length) {
+          summaries.push(`偏好 ${fallback.preferences.join("、")}`);
+        }
+        if (fallback.origin) {
+          summaries.push(`出发地 ${fallback.origin}`);
+        }
+
+        const feedback = summaries.length
+          ? `${source === "voice" ? "语音识别结果" : "解析内容"}：${trimmed}\n已识别（本地解析）：${summaries.join("，")}`
+          : `${source === "voice" ? "语音识别结果" : "解析内容"}：${trimmed}`;
+
+        finalize(feedback);
       }
     },
-    [form, knownPreferences, setField]
+    [form, knownPreferences, mergeParsedInput, setField]
   );
 
   const handleActivityFocus = useCallback(
@@ -237,7 +308,7 @@ export default function PlannerPage() {
       return;
     }
 
-    applyParsedInput(trimmed, "voice");
+    void applyParsedInput(trimmed, "voice");
   };
 
   const handleSmartInputParse = () => {
@@ -248,7 +319,7 @@ export default function PlannerPage() {
       return;
     }
 
-    applyParsedInput(trimmed, "text");
+    void applyParsedInput(trimmed, "text");
   };
 
   return (
@@ -285,9 +356,10 @@ export default function PlannerPage() {
                 <button
                   type="button"
                   onClick={handleSmartInputParse}
-                  className="rounded-lg bg-slate-800 px-4 py-2 text-sm text-white transition hover:bg-slate-700"
+                  className="rounded-lg bg-slate-800 px-4 py-2 text-sm text-white transition hover:bg-slate-700 disabled:opacity-60"
+                  disabled={parsing}
                 >
-                  解析文字描述
+                  {parsing ? "解析中..." : "解析文字描述"}
                 </button>
                 <VoiceRecorder onText={handleVoiceText} />
               </div>
