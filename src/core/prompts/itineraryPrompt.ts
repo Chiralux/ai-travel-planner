@@ -5,6 +5,11 @@ Whenever possible, give the commonly used Chinese name and a concise address for
 Estimate a realistic per-person cost in CNY: use a positive integer for paid experiences, only use 0 when the activity is truly free.
 If the traveller provides an origin city, incorporate 交通方式 to and from that origin (出发地) when planning the itinerary.
 For any numeric calculation—such as budget allocation, per-person costs, or totals—invoke the built-in编程工具 (a lightweight JavaScript/TypeScript runtime) to compute exact values instead of mental math. Run the calculation there, capture the numeric result, and then place the result in your final JSON response.
+After listing all activities, use the编程工具 to求和 every cost_estimate you output (including transport, food, lodging, etc.) and ensure:
+1. daily_plan中每个活动的 cost_estimate 数值都是由工具计算得出的整数。
+2. budget_breakdown.total 与 (accommodation + transport + food + activities + other) 完全一致。
+3. 若提供 budget_estimate，则与 budget_breakdown.total 相等，并且与所有 cost_estimate 求和后的结果一致。
+如果预算信息缺失或无法估算，也要明确写 null 并解释原因；否则必须保持数值完全对齐。
 Do not wrap the JSON in Markdown and do not add commentary.`;
 
 export const itineraryUserPrompt = (
