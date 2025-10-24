@@ -300,8 +300,23 @@ export function MapView({ markers, focusedMarker = null }: MapViewProps) {
 
     const contentMarker = target?.marker ?? focused;
 
-    map.setZoom(Math.max(map.getZoom() ?? DEFAULT_ZOOM_EMPTY, 13));
-    map.panTo(position);
+    const targetZoom = Math.max(map.getZoom?.() ?? DEFAULT_ZOOM_EMPTY, 13);
+
+    if (typeof map.setZoomAndCenter === "function") {
+      map.setZoomAndCenter(targetZoom, position);
+    } else {
+      map.setZoom?.(targetZoom);
+      map.setCenter?.(position);
+    }
+
+    map.panTo?.(position);
+
+    let recentreTimer: number | undefined;
+    if (typeof window !== "undefined" && typeof map.panTo === "function") {
+      recentreTimer = window.setTimeout(() => {
+        map.panTo(position);
+      }, 150);
+    }
 
     if (infoWindowRef.current) {
       const content = buildInfoContent({
@@ -313,6 +328,12 @@ export function MapView({ markers, focusedMarker = null }: MapViewProps) {
       infoWindowRef.current.setContent(content);
       infoWindowRef.current.open(map, position);
     }
+
+    return () => {
+      if (recentreTimer) {
+        window.clearTimeout(recentreTimer);
+      }
+    };
   }, [focusedMarker, status]);
 
   if (status === "error") {
