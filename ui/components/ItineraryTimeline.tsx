@@ -50,11 +50,6 @@ export function ItineraryTimeline({ itinerary }: ItineraryTimelineProps) {
                         预计花费 ¥{activity.cost_estimate.toFixed(0)}
                       </span>
                     )}
-                    {typeof activity.lat === "number" && typeof activity.lng === "number" && (
-                      <span className="rounded bg-slate-800/80 px-2 py-0.5">
-                        {activity.lat.toFixed(4)}, {activity.lng.toFixed(4)}
-                      </span>
-                    )}
                   </div>
                 </li>
               ))}
