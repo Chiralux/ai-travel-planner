@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { VoiceRecorder } from "../../../ui/components/VoiceRecorder";
 import { MapView } from "../../../ui/components/MapView";
 import { ItineraryTimeline } from "../../../ui/components/ItineraryTimeline";
 import { usePlannerStore, mapMarkersSelector } from "../../../lib/store/usePlannerStore";
 import { DestinationGallery } from "../../../ui/components/DestinationGallery";
+import { mergeParsedInput, parseTravelInput } from "../../core/utils/travelInputParser";
 
 const preferenceOptions = ["美食", "文化", "户外", "亲子", "夜生活", "艺术"];
 
@@ -38,6 +39,60 @@ export default function PlannerPage() {
   }));
   const markers = usePlannerStore(mapMarkersSelector);
   const [voiceMessage, setVoiceMessage] = useState<string | null>(null);
+  const [smartInput, setSmartInput] = useState<string>("");
+  const [smartInputMessage, setSmartInputMessage] = useState<string | null>(null);
+
+  const knownPreferences = useMemo(
+    () => Array.from(new Set([...preferenceOptions, ...form.preferences])),
+    [form.preferences]
+  );
+
+  const applyParsedInput = useCallback(
+    (text: string, source: "voice" | "text") => {
+      const parsed = parseTravelInput(text, { knownPreferences });
+
+      if (!parsed) {
+        const base = source === "voice" ? "语音识别结果：" : "解析内容：";
+        const feedback = `${base}${text}\n未能识别出有效的行程信息，请尝试描述目的地、天数或预算。`;
+        if (source === "voice") {
+          setVoiceMessage(feedback);
+        } else {
+          setSmartInputMessage(feedback);
+        }
+        return;
+      }
+
+      mergeParsedInput({ form, setField }, parsed);
+
+      const summaries: string[] = [];
+      if (parsed.destination) {
+        summaries.push(`目的地 ${parsed.destination}`);
+      }
+      if (parsed.days) {
+        summaries.push(`天数 ${parsed.days} 天`);
+      }
+      if (typeof parsed.budget === "number") {
+        summaries.push(`预算约 ¥${parsed.budget}`);
+      }
+      if (parsed.partySize) {
+        summaries.push(`同行 ${parsed.partySize} 人`);
+      }
+      if (parsed.preferences?.length) {
+        summaries.push(`偏好 ${parsed.preferences.join("、")}`);
+      }
+
+      const feedback = summaries.length
+        ? `${source === "voice" ? "语音识别结果" : "解析内容"}：${text}\n已识别：${summaries.join("，")}`
+        : `${source === "voice" ? "语音识别结果" : "解析内容"}：${text}`;
+
+      if (source === "voice") {
+        setVoiceMessage(feedback);
+      } else {
+        setSmartInputMessage(feedback);
+      }
+    },
+    [form, knownPreferences, setField]
+  );
 
   const handleActivityFocus = useCallback(
     (marker: { lat: number; lng: number; label?: string; address?: string }) => {
@@ -101,12 +156,18 @@ export default function PlannerPage() {
       return;
     }
 
-    setVoiceMessage(`语音识别结果：${trimmed}`);
+    applyParsedInput(trimmed, "voice");
+  };
 
-    setField(
-      "preferences",
-      Array.from(new Set([...form.preferences, trimmed]))
-    );
+  const handleSmartInputParse = () => {
+    const trimmed = smartInput.trim();
+
+    if (!trimmed) {
+      setSmartInputMessage("请输入自然语言描述，例如：我想去日本，5 天，预算 1 万元，喜欢美食和动漫，带孩子。");
+      return;
+    }
+
+    applyParsedInput(trimmed, "text");
   };
 
   return (
@@ -126,6 +187,38 @@ export default function PlannerPage() {
         onSubmit={handleSubmit}
       >
         <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-2 rounded-xl border border-slate-800 bg-slate-950/70 p-4">
+            <span className="text-sm font-medium text-slate-200">快捷输入（语音 / 文字）</span>
+            <p className="text-xs text-slate-400">描述旅行需求，系统会自动填充目的地、天数、预算、同行人数与偏好。</p>
+            <textarea
+              value={smartInput}
+              onChange={(event) => {
+                setSmartInput(event.target.value);
+                setSmartInputMessage(null);
+              }}
+              className="h-24 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 focus:border-blue-500 focus:outline-none"
+              placeholder="例如：我想去日本东京玩 5 天，预算 1 万元，带孩子，喜欢美食和动漫"
+            />
+            <div className="flex flex-col gap-2">
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={handleSmartInputParse}
+                  className="rounded-lg bg-slate-800 px-4 py-2 text-sm text-white transition hover:bg-slate-700"
+                >
+                  解析文字描述
+                </button>
+                <VoiceRecorder onText={handleVoiceText} />
+              </div>
+              {smartInputMessage && (
+                <p className="whitespace-pre-line text-xs text-slate-400">{smartInputMessage}</p>
+              )}
+            </div>
+            {voiceMessage && !smartInputMessage && (
+              <p className="whitespace-pre-line text-xs text-slate-400">{voiceMessage}</p>
+            )}
+          </div>
+
           <label className="flex flex-col gap-2">
             <span className="text-sm font-medium text-slate-200">目的地</span>
             <input
@@ -201,8 +294,11 @@ export default function PlannerPage() {
 
           <div className="flex flex-col gap-2 rounded-xl border border-slate-800 bg-slate-950/70 p-4">
             <span className="text-sm font-medium text-slate-200">语音偏好输入</span>
+            <p className="text-xs text-slate-400">语音内容同样会尝试解析目的地、天数、预算、同行人数与偏好。</p>
             <VoiceRecorder onText={handleVoiceText} />
-            {voiceMessage && <p className="text-xs text-slate-400">{voiceMessage}</p>}
+            {voiceMessage && (
+              <p className="whitespace-pre-line text-xs text-slate-400">{voiceMessage}</p>
+            )}
           </div>
         </div>
 
