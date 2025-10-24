@@ -4,6 +4,7 @@ Output every textual field (destination name, day labels, activity titles, notes
 Whenever possible, give the commonly used Chinese name and a concise address for each activity.
 Estimate a realistic per-person cost in CNY: use a positive integer for paid experiences, only use 0 when the activity is truly free.
 If the traveller provides an origin city, incorporate 交通方式 to and from that origin (出发地) when planning the itinerary.
+For any numeric calculation—such as budget allocation, per-person costs, or totals—invoke the built-in编程工具 (a lightweight JavaScript/TypeScript runtime) to compute exact values instead of mental math. Run the calculation there, capture the numeric result, and then place the result in your final JSON response.
 Do not wrap the JSON in Markdown and do not add commentary.`;
 
 export const itineraryUserPrompt = (
