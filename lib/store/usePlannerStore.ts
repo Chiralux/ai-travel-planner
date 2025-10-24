@@ -14,11 +14,25 @@ type PlannerState = {
   result: Itinerary | null;
   loading: boolean;
   error: string | null;
+  focusedMarker: {
+    lat: number;
+    lng: number;
+    label?: string;
+    address?: string;
+  } | null;
   setField: <K extends keyof PlannerForm>(key: K, value: PlannerForm[K]) => void;
   togglePreference: (value: string) => void;
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
   setResult: (itinerary: Itinerary | null) => void;
+  setFocusedMarker: (
+    marker: {
+      lat: number;
+      lng: number;
+      label?: string;
+      address?: string;
+    } | null
+  ) => void;
 };
 
 const defaultForm: PlannerForm = {
@@ -32,6 +46,7 @@ export const usePlannerStore = create<PlannerState>((set) => ({
   result: null,
   loading: false,
   error: null,
+  focusedMarker: null,
   setField: (key, value) =>
     set((state) => ({
       form: {
@@ -55,7 +70,8 @@ export const usePlannerStore = create<PlannerState>((set) => ({
     }),
   setLoading: (loading) => set({ loading }),
   setError: (error) => set({ error }),
-  setResult: (itinerary) => set({ result: itinerary })
+  setResult: (itinerary) => set({ result: itinerary, focusedMarker: null }),
+  setFocusedMarker: (marker) => set({ focusedMarker: marker })
 }));
 
 export const mapMarkersSelector = (state: PlannerState) => {

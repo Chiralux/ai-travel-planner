@@ -11,6 +11,12 @@ type Marker = {
 
 type MapViewProps = {
   markers: Marker[];
+  focusedMarker?: {
+    lat: number;
+    lng: number;
+    label?: string;
+    address?: string;
+  } | null;
 };
 
 declare global {
@@ -55,11 +61,11 @@ function buildInfoContent(marker: Marker): string {
     .join("");
 }
 
-export function MapView({ markers }: MapViewProps) {
+export function MapView({ markers, focusedMarker = null }: MapViewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<any>(null);
   const infoWindowRef = useRef<any>(null);
-  const markerInstancesRef = useRef<any[]>([]);
+  const markerInstancesRef = useRef<Array<{ overlay: any; marker: Marker }>>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const hasMountedRef = useRef(false);
 
@@ -148,7 +154,7 @@ export function MapView({ markers }: MapViewProps) {
     initMap();
 
     return () => {
-      markerInstancesRef.current.forEach((marker) => marker.setMap(null));
+  markerInstancesRef.current.forEach(({ overlay }) => overlay.setMap(null));
       markerInstancesRef.current = [];
       infoWindowRef.current?.close?.();
       infoWindowRef.current = null;
@@ -168,8 +174,8 @@ export function MapView({ markers }: MapViewProps) {
       return;
     }
 
-    markerInstancesRef.current.forEach((marker) => marker.setMap(null));
-    markerInstancesRef.current = [];
+  markerInstancesRef.current.forEach(({ overlay }) => overlay.setMap(null));
+  markerInstancesRef.current = [];
 
     if (validMarkers.length === 0) {
       infoWindowRef.current?.close?.();
@@ -179,7 +185,7 @@ export function MapView({ markers }: MapViewProps) {
     }
 
     debug("markers effect: rendering markers", { count: validMarkers.length });
-    const overlays = validMarkers.map((marker) => {
+    const instances = validMarkers.map((marker) => {
       const overlay = new AMapCtor.Marker({
         position: [marker.lng, marker.lat],
         title: marker.label
@@ -197,16 +203,57 @@ export function MapView({ markers }: MapViewProps) {
       }
 
       overlay.setMap(map);
-      return overlay;
+      return { overlay, marker };
     });
 
-    markerInstancesRef.current = overlays;
+    markerInstancesRef.current = instances;
 
-    if (overlays.length > 0) {
-      map.setFitView(overlays);
+    if (instances.length > 0) {
+      map.setFitView(instances.map((item) => item.overlay));
       debug("markers effect: fit view");
     }
   }, [validMarkers, status, sdkReady]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const focused = focusedMarker;
+    const AMapCtor = typeof window !== "undefined" ? window.AMap : undefined;
+
+    if (!focused) {
+      infoWindowRef.current?.close?.();
+    }
+
+    if (!map || status !== "ready" || !focused || !AMapCtor) {
+      return;
+    }
+
+    const epsilon = 0.0001;
+    const target = markerInstancesRef.current.find(({ marker }) => {
+      return (
+        Math.abs(marker.lat - focused.lat) < epsilon && Math.abs(marker.lng - focused.lng) < epsilon
+      );
+    });
+
+    const position = target
+      ? target.overlay.getPosition()
+      : new AMapCtor.LngLat(focused.lng, focused.lat);
+
+    const contentMarker = target?.marker ?? focused;
+
+    map.setZoom(Math.max(map.getZoom() ?? DEFAULT_ZOOM_EMPTY, 13));
+    map.panTo(position);
+
+    if (infoWindowRef.current) {
+      const content = buildInfoContent({
+        lat: contentMarker.lat,
+        lng: contentMarker.lng,
+        label: contentMarker.label ?? "",
+        address: contentMarker.address
+      });
+      infoWindowRef.current.setContent(content);
+      infoWindowRef.current.open(map, position);
+    }
+  }, [focusedMarker, status]);
 
   if (status === "error") {
     return (

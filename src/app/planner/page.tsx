@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import type { FormEvent } from "react";
 import { VoiceRecorder } from "../../../ui/components/VoiceRecorder";
 import { MapView } from "../../../ui/components/MapView";
@@ -20,7 +20,9 @@ export default function PlannerPage() {
     togglePreference,
     setLoading,
     setError,
-    setResult
+    setResult,
+    setFocusedMarker,
+    focusedMarker
   } = usePlannerStore((state) => ({
     form: state.form,
     loading: state.loading,
@@ -30,10 +32,19 @@ export default function PlannerPage() {
     togglePreference: state.togglePreference,
     setLoading: state.setLoading,
     setError: state.setError,
-    setResult: state.setResult
+    setResult: state.setResult,
+    setFocusedMarker: state.setFocusedMarker,
+    focusedMarker: state.focusedMarker
   }));
   const markers = usePlannerStore(mapMarkersSelector);
   const [voiceMessage, setVoiceMessage] = useState<string | null>(null);
+
+  const handleActivityFocus = useCallback(
+    (marker: { lat: number; lng: number; label?: string; address?: string }) => {
+      setFocusedMarker(marker);
+    },
+    [setFocusedMarker]
+  );
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -237,7 +248,7 @@ export default function PlannerPage() {
             <span className="text-xs text-slate-400">拖动缩放以查看每日地点</span>
           </header>
           <div className="relative h-80">
-            <MapView markers={markers} />
+            <MapView markers={markers} focusedMarker={focusedMarker ?? undefined} />
           </div>
           {markers.length === 0 && (
             <div className="rounded-2xl border border-dashed border-slate-700/80 bg-slate-950/60 p-4 text-center text-sm text-slate-400">
@@ -253,7 +264,7 @@ export default function PlannerPage() {
               <h2 className="text-xl font-semibold text-white">日程时间线</h2>
               <span className="text-xs text-slate-400">按天查看详细安排</span>
             </header>
-            <ItineraryTimeline itinerary={result} />
+            <ItineraryTimeline itinerary={result} onActivityFocus={handleActivityFocus} />
           </div>
 
           <DestinationGallery />
