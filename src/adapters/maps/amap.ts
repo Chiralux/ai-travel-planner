@@ -96,7 +96,14 @@ export class AMapClient implements MapsClient {
     for (const activity of activities) {
       const hasCoords = activity.lat !== undefined && activity.lng !== undefined;
 
-      if ((hasCoords && activity.address) || !activity.title) {
+      // If activity already has coordinates, prefer them over geocoding
+      if (hasCoords) {
+        enriched.push(activity);
+        continue;
+      }
+
+      // Skip if no title to search for
+      if (!activity.title) {
         enriched.push(activity);
         continue;
       }
@@ -121,10 +128,11 @@ export class AMapClient implements MapsClient {
           const nextTitle = usePlaceName && placeName ? placeName : originalTitle;
           const nextAddress = activity.address ?? place.address;
 
+          // Only use geocoded coordinates if activity doesn't already have them
           enriched.push({
             ...activity,
-            lat: activity.lat ?? place.lat,
-            lng: activity.lng ?? place.lng,
+            lat: place.lat,
+            lng: place.lng,
             address: nextAddress,
             title: nextTitle
           });
