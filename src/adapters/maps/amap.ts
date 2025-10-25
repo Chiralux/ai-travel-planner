@@ -4,6 +4,7 @@ import type { Activity } from "../../core/validation/itinerarySchema";
 import { requestJson } from "./shared";
 
 const AMAP_TEXT_ENDPOINT = "https://restapi.amap.com/v5/place/text";
+const AMAP_NEW_POI_ENDPOINT = "https://restapi.amap.com/v5/place/fast";
 const CHINESE_CHAR_REGEX = /[\u4e00-\u9fff]/;
 const LOCATION_SUFFIX_PATTERN = /(特别行政区|自治区|自治州|地区|盟|市|省|县|区)$/u;
 const MATCH_CONFIDENCE_THRESHOLD = 0.75;
@@ -261,6 +262,21 @@ function candidateKey(poi: AMapPoi): string {
   return [poi.name ?? "", poi.address ?? "", poi.adname ?? "", poi.location ?? ""].join("|");
 }
 
+function toPlace(candidate: CandidateEntry, fallbackName: string): Place {
+  const poi = candidate.poi;
+
+  return {
+    name: poi.name ?? fallbackName,
+    address: poi.address || poi.adname || poi.district,
+    city: poi.cityname,
+    lat: candidate.lat,
+    lng: candidate.lng,
+    provider: "amap",
+    raw: poi,
+    confidence: candidate.confidence
+  };
+}
+
 function buildAmbiguityNote(candidates: CandidateEntry[], searchTerms: string[]): string {
   const descriptions = candidates.map((candidate, index) => {
     const name = candidate.poi.name ?? "候选地点";
@@ -321,6 +337,7 @@ type AMapPoi = {
 type AMapTextResponse = {
   status?: string;
   info?: string;
+  infocode?: string;
   pois?: AMapPoi[];
 };
 
@@ -349,6 +366,16 @@ export class AMapClient implements MapsClient {
       return null;
     }
 
+    const referenceName = options?.referenceName ?? query;
+    const minConfidence = Math.max(0, Math.min(1, options?.minConfidence ?? MATCH_CONFIDENCE_THRESHOLD));
+
+    const newPoiCandidates = await this.fetchNewPoiCandidates(query, cityOrDestination, referenceName);
+    const strongNewPoi = newPoiCandidates.find((candidate) => candidate.confidence >= minConfidence);
+
+    if (strongNewPoi) {
+      return toPlace(strongNewPoi, referenceName);
+    }
+
     const params = new URLSearchParams({
       key: this.apiKey,
       keywords: query,
@@ -372,7 +399,7 @@ export class AMapClient implements MapsClient {
       }
 
       const filteredPois = response.pois.filter((poiCandidate) =>
-        poiMatchesDestination(cityOrDestination, poiCandidate, options?.referenceName ?? query)
+        poiMatchesDestination(cityOrDestination, poiCandidate, referenceName)
       );
 
       if (filteredPois.length === 0) {
@@ -380,12 +407,10 @@ export class AMapClient implements MapsClient {
       }
 
       const evaluated = filteredPois
-        .map((poi) => ({ poi, confidence: evaluatePoiConfidence(options?.referenceName ?? query, poi) }))
+        .map((poi) => ({ poi, confidence: evaluatePoiConfidence(referenceName, poi) }))
         .sort((a, b) => b.confidence - a.confidence);
 
       const best = evaluated[0];
-
-      const minConfidence = Math.max(0, Math.min(1, options?.minConfidence ?? MATCH_CONFIDENCE_THRESHOLD));
 
       if (!best || best.confidence < minConfidence) {
         return null;
@@ -489,10 +514,120 @@ export class AMapClient implements MapsClient {
         }
       }
 
-      return candidates;
+      const needsMoreCandidates =
+        candidates.length === 0 || candidates.every((entry) => entry.confidence < MATCH_CONFIDENCE_THRESHOLD);
+
+      if (needsMoreCandidates) {
+  const newPoiCandidates = await this.fetchNewPoiCandidates(query, cityOrDestination, referenceName);
+
+        for (const candidate of newPoiCandidates) {
+          const key = candidateKey(candidate.poi);
+          const exists = candidates.some((entry) => candidateKey(entry.poi) === key);
+
+          if (exists) {
+            continue;
+          }
+
+          candidates.push(candidate);
+
+          if (candidates.length >= MAX_CANDIDATE_RESULTS) {
+            break;
+          }
+        }
+      }
+
+      return candidates.sort((a, b) => b.confidence - a.confidence).slice(0, MAX_CANDIDATE_RESULTS);
     } catch (error) {
       if (process.env.NODE_ENV !== "production") {
         console.warn("[maps][amap] Candidate fetch failed", error);
+      }
+
+      return [];
+    }
+  }
+
+  private async fetchNewPoiCandidates(
+    term: string,
+    cityOrDestination: string | undefined,
+    referenceName: string
+  ): Promise<CandidateEntry[]> {
+    const query = term.trim();
+
+    if (!query) {
+      return [];
+    }
+
+    if (!this.apiKey) {
+      if (!this.warnedMissingKey && process.env.NODE_ENV !== "production") {
+        console.warn("[maps][amap] Missing AMAP_REST_KEY, skipping new POI lookups.");
+        this.warnedMissingKey = true;
+      }
+
+      return [];
+    }
+
+    const params = new URLSearchParams({
+      key: this.apiKey,
+      keywords: query,
+      output: "JSON",
+      page_size: "10",
+      page_num: "1",
+      show_fields: "photos"
+    });
+
+    if (cityOrDestination) {
+      params.set("region", cityOrDestination);
+      params.set("city", cityOrDestination);
+      params.set("city_limit", "true");
+    }
+
+    try {
+      const response = await requestJson<AMapTextResponse>(`${AMAP_NEW_POI_ENDPOINT}?${params.toString()}`);
+
+      if (response.status !== "1" || !Array.isArray(response.pois) || response.pois.length === 0) {
+        return [];
+      }
+
+      const filteredPois = response.pois.filter((poiCandidate) =>
+        poiMatchesDestination(cityOrDestination, poiCandidate, referenceName ?? query)
+      );
+
+      if (filteredPois.length === 0) {
+        return [];
+      }
+
+      const evaluated = filteredPois
+        .map((poi) => ({ poi, confidence: evaluatePoiConfidence(referenceName ?? query, poi) }))
+        .sort((a, b) => b.confidence - a.confidence)
+        .slice(0, MAX_CANDIDATE_RESULTS * 2);
+
+      const candidates: CandidateEntry[] = [];
+
+      for (const item of evaluated) {
+        const location = parsePoiLocation(item.poi);
+
+        if (location.lat === undefined || location.lng === undefined) {
+          continue;
+        }
+
+        candidates.push({
+          poi: item.poi,
+          confidence: item.confidence,
+          term: query,
+          lat: location.lat,
+          lng: location.lng,
+          photos: extractPoiPhotos(item.poi)
+        });
+
+        if (candidates.length >= MAX_CANDIDATE_RESULTS) {
+          break;
+        }
+      }
+
+      return candidates;
+    } catch (error) {
+      if (process.env.NODE_ENV !== "production") {
+        console.warn("[maps][amap] New POI candidate fetch failed", error);
       }
 
       return [];
@@ -578,9 +713,35 @@ export class AMapClient implements MapsClient {
           }
         }
 
-        const sortedCandidates = Array.from(candidateMap.values())
+        let sortedCandidates = Array.from(candidateMap.values())
           .filter((entry) => entry.confidence >= MATCH_CONFIDENCE_THRESHOLD)
           .sort((a, b) => b.confidence - a.confidence);
+
+        if (sortedCandidates.length === 0) {
+          const fallbackCandidates = await this.fetchNewPoiCandidates(
+            activity.title,
+            destination,
+            activity.title ?? searchTerms[0] ?? ""
+          );
+
+          for (const candidate of fallbackCandidates) {
+            const key = candidateKey(candidate.poi);
+            const existing = candidateMap.get(key);
+
+            if (!existing || candidate.confidence > existing.confidence) {
+              candidateMap.set(key, candidate);
+              continue;
+            }
+
+            if (existing.photos.length === 0 && candidate.photos.length > 0) {
+              candidateMap.set(key, { ...existing, photos: candidate.photos });
+            }
+          }
+
+          sortedCandidates = Array.from(candidateMap.values())
+            .filter((entry) => entry.confidence >= MATCH_CONFIDENCE_THRESHOLD)
+            .sort((a, b) => b.confidence - a.confidence);
+        }
 
         const topCandidates = sortedCandidates.slice(0, MAX_CANDIDATE_RESULTS);
 
