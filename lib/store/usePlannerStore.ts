@@ -100,7 +100,12 @@ export const mapMarkersSelector = (state: PlannerState) => {
     lng: number;
     label: string;
     address?: string;
-    sequence?: number;
+    sequenceLabel?: string;
+    sequenceGroup?: Array<{
+      sequence: number;
+      label: string;
+      address?: string;
+    }>;
   }> = [];
 
   if (state.form.originCoords) {
@@ -139,22 +144,67 @@ export const mapMarkersSelector = (state: PlannerState) => {
     return markers;
   }
 
+  type MarkerEntry = {
+    sequence: number;
+    title: string;
+    address?: string;
+  };
+
+  const grouped = new Map<
+    string,
+    {
+      lat: number;
+      lng: number;
+      entries: MarkerEntry[];
+    }
+  >();
+
   for (const day of state.result.daily_plan) {
     for (const activity of day.activities) {
       const currentSequence = sequence;
       sequence += 1;
       const coords = normalizeCoords(activity.lat, activity.lng);
 
-      if (coords) {
-        markers.push({
+      if (!coords) {
+        continue;
+      }
+
+      const duplicateKey = `${coords.lat.toFixed(6)}:${coords.lng.toFixed(6)}`;
+      if (!grouped.has(duplicateKey)) {
+        grouped.set(duplicateKey, {
           lat: coords.lat,
           lng: coords.lng,
-          label: activity.title,
-          address: formatAddressWithConfidence(activity.address, activity.maps_confidence),
-          sequence: currentSequence
+          entries: []
         });
       }
+
+      grouped.get(duplicateKey)!.entries.push({
+        sequence: currentSequence,
+        title: activity.title,
+        address: formatAddressWithConfidence(activity.address, activity.maps_confidence)
+      });
     }
+  }
+
+  for (const group of grouped.values()) {
+    const sortedEntries = [...group.entries].sort((a, b) => a.sequence - b.sequence);
+    const titles = sortedEntries.map((entry) => entry.title).filter(Boolean);
+    const label = titles.length === 0 ? "行程活动" : titles.join(" / ");
+    const firstAddress = sortedEntries.find((entry) => Boolean(entry.address))?.address;
+    const sequenceLabel = sortedEntries.map((entry) => entry.sequence).join("·");
+
+    markers.push({
+      lat: group.lat,
+      lng: group.lng,
+      label,
+      address: firstAddress,
+      sequenceLabel: sequenceLabel || undefined,
+      sequenceGroup: sortedEntries.map((entry) => ({
+        sequence: entry.sequence,
+        label: entry.title,
+        address: entry.address
+      }))
+    });
   }
 
   return markers;

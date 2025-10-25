@@ -7,7 +7,12 @@ type Marker = {
   lng: number;
   label: string;
   address?: string;
-  sequence?: number;
+  sequenceLabel?: string;
+  sequenceGroup?: Array<{
+    sequence: number;
+    label: string;
+    address?: string;
+  }>;
 };
 
 type MapViewProps = {
@@ -54,32 +59,55 @@ function escapeHtml(input: string): string {
 }
 
 function buildInfoContent(marker: Marker): string {
-  const titleText = marker.sequence != null ? `${marker.sequence}. ${marker.label}` : marker.label;
-  const title = escapeHtml(titleText);
-  const address = marker.address ? escapeHtml(marker.address) : null;
+  const sequenceGroup = marker.sequenceGroup ?? [];
 
-  return [`<strong style="display:block;color:#111827;">${title}</strong>`, address ? `<span style="color:#4b5563;">${address}</span>` : ""]
-    .filter(Boolean)
+  if (sequenceGroup.length <= 1) {
+    const entry = sequenceGroup[0];
+    const titleText = entry ? `${entry.sequence}. ${entry.label}` : marker.label;
+    const title = escapeHtml(titleText);
+    const addressSource = entry?.address ?? marker.address;
+    const address = addressSource ? escapeHtml(addressSource) : null;
+
+    return [`<strong style="display:block;color:#111827;">${title}</strong>`, address ? `<span style="color:#4b5563;">${address}</span>` : ""]
+      .filter(Boolean)
+      .join("");
+  }
+
+  const rows = sequenceGroup
+    .map((entry, index) => {
+      const isLast = index === sequenceGroup.length - 1;
+      const title = escapeHtml(`${entry.sequence}. ${entry.label}`);
+      const address = entry.address
+        ? `<span style="display:block;color:#4b5563;margin-top:2px;">${escapeHtml(entry.address)}</span>`
+        : "";
+      const borderStyle = isLast ? "none" : "1px solid #e5e7eb";
+      return `<div style="padding:4px 0;border-bottom:${borderStyle};">
+        <strong style="display:block;color:#111827;">${title}</strong>
+        ${address}
+      </div>`;
+    })
     .join("");
+
+  return `<div style="max-width:220px;">${rows}</div>`;
 }
 
-function createNumberedMarkerElement(sequence: number) {
+function createNumberedMarkerElement(sequenceLabel: string) {
   if (typeof document === "undefined") {
     return undefined;
   }
 
   const wrapper = document.createElement("div");
   wrapper.style.position = "relative";
-  wrapper.style.width = "32px";
-  wrapper.style.height = "44px";
+  wrapper.style.width = "auto";
+  wrapper.style.minHeight = "44px";
   wrapper.style.display = "flex";
   wrapper.style.alignItems = "center";
   wrapper.style.justifyContent = "center";
   wrapper.style.cursor = "pointer";
 
   const circle = document.createElement("div");
-  circle.textContent = String(sequence);
-  circle.style.width = "30px";
+  circle.textContent = sequenceLabel;
+  circle.style.minWidth = "30px";
   circle.style.height = "30px";
   circle.style.borderRadius = "9999px";
   circle.style.background = "#2563eb";
@@ -88,10 +116,11 @@ function createNumberedMarkerElement(sequence: number) {
   circle.style.alignItems = "center";
   circle.style.justifyContent = "center";
   circle.style.fontWeight = "600";
-  circle.style.fontSize = "13px";
+  circle.style.fontSize = "12px";
   circle.style.boxShadow = "0 6px 12px rgba(37, 99, 235, 0.45)";
   circle.style.border = "2px solid #1d4ed8";
   circle.style.marginBottom = "6px";
+  circle.style.padding = "0 10px";
 
   const pointer = document.createElement("div");
   pointer.style.position = "absolute";
@@ -235,14 +264,22 @@ export function MapView({ markers, focusedMarker = null }: MapViewProps) {
 
     debug("markers effect: rendering markers", { count: validMarkers.length });
     const instances = validMarkers.map((marker) => {
-      const markerTitle = marker.sequence != null ? `${marker.sequence}. ${marker.label}` : marker.label;
+      const sequenceLabel = marker.sequenceLabel ??
+        (marker.sequenceGroup && marker.sequenceGroup.length === 1
+          ? String(marker.sequenceGroup[0].sequence)
+          : undefined);
+      const markerTitle = marker.sequenceGroup && marker.sequenceGroup.length > 1
+        ? marker.sequenceGroup.map((entry) => `${entry.sequence}. ${entry.label}`).join(" / ")
+        : sequenceLabel
+        ? `${sequenceLabel}. ${marker.label}`
+        : marker.label;
       const options: Record<string, unknown> = {
         position: [marker.lng, marker.lat],
         title: markerTitle
       };
 
-      if (marker.sequence != null) {
-        const contentEl = createNumberedMarkerElement(marker.sequence);
+      if (sequenceLabel) {
+        const contentEl = createNumberedMarkerElement(sequenceLabel);
         if (contentEl) {
           options.content = contentEl;
           options.offset = new AMapCtor.Pixel(-16, -44);
