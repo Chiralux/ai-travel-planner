@@ -477,14 +477,6 @@ export default function PlannerPage() {
             )}
           </div>
 
-          <div className="flex flex-col gap-2 rounded-xl border border-slate-800 bg-slate-950/70 p-4">
-            <span className="text-sm font-medium text-slate-200">语音偏好输入</span>
-            <p className="text-xs text-slate-400">语音内容同样会尝试解析目的地、天数、预算、同行人数与偏好。</p>
-            <VoiceRecorder onText={handleVoiceText} />
-            {voiceMessage && (
-              <p className="whitespace-pre-line text-xs text-slate-400">{voiceMessage}</p>
-            )}
-          </div>
         </div>
 
         <div className="flex flex-col justify-between gap-4">
