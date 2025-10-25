@@ -249,6 +249,102 @@ function extractPoiPhotos(poi: AMapPoi | undefined): string[] {
   return urls;
 }
 
+type CandidateRole = "origin" | "destination" | "generic";
+
+type KeyLocationHint = {
+  pattern: RegExp;
+  keywords: string[];
+  role?: CandidateRole;
+};
+
+const KEY_LOCATION_HINTS: KeyLocationHint[] = [
+  { pattern: /(火车站|铁路站|高铁站|train station|railway station)/i, keywords: ["火车站", "train station"], role: "generic" },
+  { pattern: /(机场|航站楼|airport|terminal)/i, keywords: ["机场", "airport", "terminal"], role: "generic" },
+  { pattern: /(巴士站|汽车站|长途车站|bus station|coach station)/i, keywords: ["汽车站", "bus station"], role: "generic" },
+  { pattern: /(地铁站|subway station|metro station)/i, keywords: ["地铁站", "subway station", "metro station"], role: "generic" },
+  { pattern: /(码头|港口|港湾|pier|ferry|harbor|harbour|port)/i, keywords: ["码头", "港口", "ferry terminal"], role: "generic" }
+];
+
+const TRAVEL_MODE_HINTS: Array<{ pattern: RegExp; preferredRoles: Array<{ keyword: string; role: CandidateRole }> }> = [
+  {
+    pattern: /(高铁|动车|bullet train|rail|火车|train)/i,
+    preferredRoles: [
+      { keyword: "火车站", role: "origin" },
+      { keyword: "火车站", role: "destination" },
+      { keyword: "train station", role: "origin" },
+      { keyword: "train station", role: "destination" }
+    ]
+  },
+  {
+    pattern: /(飞机|航班|flight|airport|航站楼)/i,
+    preferredRoles: [
+      { keyword: "机场", role: "origin" },
+      { keyword: "机场", role: "destination" },
+      { keyword: "airport", role: "origin" },
+      { keyword: "airport", role: "destination" }
+    ]
+  },
+  {
+    pattern: /(长途汽车|大巴|coach|bus)/i,
+    preferredRoles: [
+      { keyword: "汽车站", role: "origin" },
+      { keyword: "汽车站", role: "destination" },
+      { keyword: "bus station", role: "origin" },
+      { keyword: "bus station", role: "destination" }
+    ]
+  }
+];
+
+function extractKeyLocationKeywords(
+  sources: Array<{ text?: string; roleHint?: CandidateRole }>
+): Array<{ keyword: string; role?: CandidateRole }> {
+  const results = new Map<string, CandidateRole | undefined>();
+  const aggregatedLowercaseText = sources
+    .map((source) => source.text?.toLowerCase() ?? "")
+    .join(" ");
+
+  for (const source of sources) {
+    if (!source.text) {
+      continue;
+    }
+
+    for (const hint of KEY_LOCATION_HINTS) {
+      if (hint.pattern.test(source.text)) {
+        for (const keyword of hint.keywords) {
+          const trimmed = keyword.trim();
+
+          if (!trimmed) {
+            continue;
+          }
+
+          const existingRole = results.get(trimmed);
+          const candidateRole = source.roleHint ?? hint.role;
+
+          if (!existingRole || existingRole === "generic") {
+            results.set(trimmed, candidateRole ?? existingRole);
+          }
+        }
+      }
+    }
+  }
+
+  for (const mode of TRAVEL_MODE_HINTS) {
+    if (!mode.pattern.test(aggregatedLowercaseText)) {
+      continue;
+    }
+
+    for (const preference of mode.preferredRoles) {
+      const existingRole = results.get(preference.keyword);
+
+      if (!existingRole || existingRole === "generic") {
+        results.set(preference.keyword, preference.role);
+      }
+    }
+  }
+
+  return Array.from(results.entries()).map(([keyword, role]) => ({ keyword, role }));
+}
+
 type CandidateEntry = {
   poi: AMapPoi;
   confidence: number;
@@ -256,6 +352,7 @@ type CandidateEntry = {
   lat: number;
   lng: number;
   photos: string[];
+  role?: CandidateRole;
 };
 
 function candidateKey(poi: AMapPoi): string {
@@ -443,7 +540,8 @@ export class AMapClient implements MapsClient {
   private async fetchCandidates(
     term: string,
     cityOrDestination: string | undefined,
-    referenceName: string
+    referenceName: string,
+    roleHint?: CandidateRole
   ): Promise<CandidateEntry[]> {
     const query = term.trim();
 
@@ -506,7 +604,8 @@ export class AMapClient implements MapsClient {
           term: query,
           lat: location.lat,
           lng: location.lng,
-          photos: extractPoiPhotos(item.poi)
+          photos: extractPoiPhotos(item.poi),
+          role: roleHint
         });
 
         if (candidates.length >= MAX_CANDIDATE_RESULTS) {
@@ -518,7 +617,7 @@ export class AMapClient implements MapsClient {
         candidates.length === 0 || candidates.every((entry) => entry.confidence < MATCH_CONFIDENCE_THRESHOLD);
 
       if (needsMoreCandidates) {
-  const newPoiCandidates = await this.fetchNewPoiCandidates(query, cityOrDestination, referenceName);
+  const newPoiCandidates = await this.fetchNewPoiCandidates(query, cityOrDestination, referenceName, roleHint);
 
         for (const candidate of newPoiCandidates) {
           const key = candidateKey(candidate.poi);
@@ -549,7 +648,8 @@ export class AMapClient implements MapsClient {
   private async fetchNewPoiCandidates(
     term: string,
     cityOrDestination: string | undefined,
-    referenceName: string
+    referenceName: string,
+    roleHint?: CandidateRole
   ): Promise<CandidateEntry[]> {
     const query = term.trim();
 
@@ -616,7 +716,8 @@ export class AMapClient implements MapsClient {
           term: query,
           lat: location.lat,
           lng: location.lng,
-          photos: extractPoiPhotos(item.poi)
+          photos: extractPoiPhotos(item.poi),
+          role: roleHint
         });
 
         if (candidates.length >= MAX_CANDIDATE_RESULTS) {
@@ -702,8 +803,13 @@ export class AMapClient implements MapsClient {
       try {
         const candidateMap = new Map<string, CandidateEntry>();
 
-        for (const term of searchTerms) {
-          const candidates = await this.fetchCandidates(term, destination, activity.title ?? term);
+        for (const searchTerm of searchTerms) {
+          const candidates = await this.fetchCandidates(
+            searchTerm.term,
+            destination,
+            activity.title ?? searchTerm.term,
+            searchTerm.role
+          );
 
           for (const candidate of candidates) {
             const key = candidateKey(candidate.poi);
@@ -712,6 +818,10 @@ export class AMapClient implements MapsClient {
             if (!existing || candidate.confidence > existing.confidence) {
               candidateMap.set(key, candidate);
               continue;
+            }
+
+            if ((!existing.role || existing.role === "generic") && candidate.role && candidate.role !== "generic") {
+              candidateMap.set(key, { ...existing, role: candidate.role });
             }
 
             if (existing.photos.length === 0 && candidate.photos.length > 0) {
@@ -728,7 +838,8 @@ export class AMapClient implements MapsClient {
           const fallbackCandidates = await this.fetchNewPoiCandidates(
             activity.title,
             destination,
-            activity.title ?? searchTerms[0] ?? ""
+            activity.title ?? searchTerms[0]?.term ?? "",
+            searchTerms[0]?.role
           );
 
           for (const candidate of fallbackCandidates) {
@@ -738,6 +849,10 @@ export class AMapClient implements MapsClient {
             if (!existing || candidate.confidence > existing.confidence) {
               candidateMap.set(key, candidate);
               continue;
+            }
+
+            if ((!existing.role || existing.role === "generic") && candidate.role && candidate.role !== "generic") {
+              candidateMap.set(key, { ...existing, role: candidate.role });
             }
 
             if (existing.photos.length === 0 && candidate.photos.length > 0) {
@@ -790,7 +905,10 @@ export class AMapClient implements MapsClient {
             continue;
           }
 
-          const ambiguityNote = buildAmbiguityNote(topCandidates, searchTerms);
+          const ambiguityNote = buildAmbiguityNote(
+            topCandidates,
+            searchTerms.map((entry) => entry.term)
+          );
           const note = appendNote(activity.note, ambiguityNote);
 
           enriched.push({
@@ -824,43 +942,72 @@ export class AMapClient implements MapsClient {
     title?: string,
     address?: string,
     note?: string
-  ): string[] {
-    const terms = new Set<string>();
+  ): Array<{ term: string; role?: CandidateRole }> {
+    const terms = new Map<string, CandidateRole | undefined>();
 
     const clean = (value?: string) => value?.trim();
     const cleanedDestination = clean(destination);
     const cleanedTitle = clean(title);
     const cleanedAddress = clean(address);
     const cleanedNote = clean(note);
+    const keyLocationKeywords = extractKeyLocationKeywords([
+      { text: cleanedTitle },
+      { text: cleanedAddress },
+      { text: cleanedNote },
+      { text: cleanedDestination }
+    ]);
+
+    const addTerm = (value?: string, role?: CandidateRole) => {
+      const trimmed = value?.trim();
+
+      if (!trimmed) {
+        return;
+      }
+
+      const existingRole = terms.get(trimmed);
+
+      if (!existingRole || existingRole === "generic") {
+        terms.set(trimmed, role ?? existingRole);
+      }
+    };
 
     if (cleanedTitle && cleanedAddress) {
-      terms.add(`${cleanedTitle} ${cleanedAddress}`);
+      addTerm(`${cleanedTitle} ${cleanedAddress}`);
     }
 
     if (cleanedDestination && cleanedAddress) {
-      terms.add(`${cleanedDestination} ${cleanedAddress}`);
+      addTerm(`${cleanedDestination} ${cleanedAddress}`);
     }
 
     if (cleanedDestination && cleanedTitle) {
-      terms.add(`${cleanedDestination} ${cleanedTitle}`);
+      addTerm(`${cleanedDestination} ${cleanedTitle}`);
     }
 
     if (cleanedTitle && cleanedNote) {
-      terms.add(`${cleanedTitle} ${cleanedNote}`);
+      addTerm(`${cleanedTitle} ${cleanedNote}`);
     }
 
-    if (cleanedAddress) {
-      terms.add(cleanedAddress);
+    addTerm(cleanedAddress);
+    addTerm(cleanedTitle);
+    addTerm(cleanedNote);
+
+    for (const { keyword, role } of keyLocationKeywords) {
+      addTerm(keyword, role);
+
+      if (cleanedDestination) {
+        addTerm(`${cleanedDestination} ${keyword}`, role);
+        addTerm(`${keyword} ${cleanedDestination}`, role);
+      }
+
+      if (cleanedTitle) {
+        addTerm(`${cleanedTitle} ${keyword}`, role);
+      }
+
+      if (cleanedAddress) {
+        addTerm(`${cleanedAddress} ${keyword}`, role);
+      }
     }
 
-    if (cleanedTitle) {
-      terms.add(cleanedTitle);
-    }
-
-    if (cleanedNote) {
-      terms.add(cleanedNote);
-    }
-
-    return Array.from(terms);
+    return Array.from(terms.entries()).map(([term, role]) => ({ term, role }));
   }
 }

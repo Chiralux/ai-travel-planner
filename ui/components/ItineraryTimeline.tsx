@@ -1,7 +1,7 @@
 "use client";
 
+import { useEffect, useState, type KeyboardEvent, type MouseEvent } from "react";
 import type { Itinerary } from "../../src/core/validation/itinerarySchema";
-import type { KeyboardEvent } from "react";
 
 type FocusableMarker = {
   lat: number;
@@ -27,6 +27,26 @@ function formatConfidenceLabel(confidence?: number): string | null {
 }
 
 export function ItineraryTimeline({ itinerary, onActivityFocus }: ItineraryTimelineProps) {
+  const [expandedActivities, setExpandedActivities] = useState<Set<string>>(() => new Set());
+
+  useEffect(() => {
+    setExpandedActivities(new Set());
+  }, [itinerary]);
+
+  const toggleExpanded = (key: string) => {
+    setExpandedActivities((current) => {
+      const next = new Set(current);
+
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+
+      return next;
+    });
+  };
+
   if (!itinerary) {
     return <p className="text-sm text-slate-400">生成行程后会显示详细日程安排。</p>;
   }
@@ -50,6 +70,8 @@ export function ItineraryTimeline({ itinerary, onActivityFocus }: ItineraryTimel
             <p className="text-sm text-slate-500">暂无活动安排。</p>) : (
             <ol className="space-y-3">
               {day.activities.map((activity, index) => {
+                const activityKey = `${day.day}-${index}`;
+                const isExpanded = expandedActivities.has(activityKey);
                 const confidenceLabel = formatConfidenceLabel(activity.maps_confidence);
                 const addressLine = activity.address
                   ? `${activity.address}${confidenceLabel ? `（${confidenceLabel}）` : ""}`
@@ -82,6 +104,11 @@ export function ItineraryTimeline({ itinerary, onActivityFocus }: ItineraryTimel
                   }
                 };
 
+                const handleToggleExpanded = (event: MouseEvent<HTMLButtonElement>) => {
+                  event.stopPropagation();
+                  toggleExpanded(activityKey);
+                };
+
                 return (
                   <li
                     key={`${day.day}-${activity.title}-${index}`}
@@ -92,42 +119,61 @@ export function ItineraryTimeline({ itinerary, onActivityFocus }: ItineraryTimel
                     tabIndex={focusPayload ? 0 : undefined}
                     aria-label={focusPayload ? `定位到 ${activity.title}` : undefined}
                   >
-                  <div className="flex items-center justify-between">
-                    <span className="font-medium text-slate-100">{activity.title}</span>
-                    {activity.time_slot && (
-                      <span className="text-xs text-slate-400">{activity.time_slot}</span>
-                    )}
-                  </div>
-                    {photos.length > 0 && (
-                      <div className="mt-2 flex gap-2">
-                        {photos.map((photo, photoIndex) => (
-                          <div
-                            key={`${day.day}-${activity.title}-photo-${photoIndex}`}
-                            className="h-20 w-32 overflow-hidden rounded-md border border-slate-800/60 bg-slate-900/80"
-                          >
-                            <img
-                              src={photo}
-                              alt={`${activity.title} 参考图`}
-                              className="h-full w-full object-cover"
-                              loading="lazy"
-                            />
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex flex-col gap-1">
+                        <span className="font-medium text-slate-100">{activity.title}</span>
+                        {activity.time_slot && (
+                          <span className="text-xs text-slate-400">{activity.time_slot}</span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {typeof activity.cost_estimate === "number" && (
+                          <span className="rounded bg-emerald-900/40 px-2 py-0.5 text-xs text-emerald-200">
+                            ¥{activity.cost_estimate.toFixed(0)}
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          className="rounded border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-200 transition hover:border-blue-500 hover:text-blue-300"
+                          onClick={handleToggleExpanded}
+                          aria-expanded={isExpanded}
+                        >
+                          {isExpanded ? "收起详情" : "查看详情"}
+                        </button>
+                      </div>
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
+                      <span className="rounded bg-slate-800/80 px-2 py-0.5 uppercase">{activity.kind}</span>
+                      {confidenceLabel && (
+                        <span className="rounded bg-slate-800/60 px-2 py-0.5">{confidenceLabel}</span>
+                      )}
+                    </div>
+                    {isExpanded && (
+                      <div className="mt-3 space-y-2 text-sm text-slate-400">
+                        {photos.length > 0 && (
+                          <div className="flex gap-2">
+                            {photos.map((photo, photoIndex) => (
+                              <div
+                                key={`${day.day}-${activity.title}-photo-${photoIndex}`}
+                                className="h-20 w-32 overflow-hidden rounded-md border border-slate-800/60 bg-slate-900/80"
+                              >
+                                <img
+                                  src={photo}
+                                  alt={`${activity.title} 参考图`}
+                                  className="h-full w-full object-cover"
+                                  loading="lazy"
+                                />
+                              </div>
+                            ))}
                           </div>
-                        ))}
+                        )}
+                        {activity.note && <p>{activity.note}</p>}
+                        {addressLine && <p>{addressLine}</p>}
+                        {!activity.note && !addressLine && photos.length === 0 && (
+                          <p className="text-slate-500">暂无更多信息</p>
+                        )}
                       </div>
                     )}
-                  <div className="space-y-1 text-sm text-slate-400">
-                    {activity.note && <p>{activity.note}</p>}
-                    {addressLine && <p>{addressLine}</p>}
-                    {!activity.note && !addressLine && <p>暂无补充说明</p>}
-                  </div>
-                  <div className="flex flex-wrap gap-2 text-xs text-slate-500">
-                    <span className="rounded bg-slate-800/80 px-2 py-0.5 uppercase">{activity.kind}</span>
-                    {typeof activity.cost_estimate === "number" && (
-                      <span className="rounded bg-emerald-900/40 px-2 py-0.5">
-                        预计花费 ¥{activity.cost_estimate.toFixed(0)}
-                      </span>
-                    )}
-                  </div>
                   </li>
                 );
               })}
