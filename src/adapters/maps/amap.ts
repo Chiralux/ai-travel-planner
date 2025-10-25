@@ -625,8 +625,15 @@ export class AMapClient implements MapsClient {
       }
 
       return candidates;
-    } catch (error) {
-      if (process.env.NODE_ENV !== "production") {
+    } catch (error: unknown) {
+      const status = typeof error === "object" && error !== null && "status" in error ? (error as { status?: number }).status : undefined;
+      const is404Message =
+        status === undefined &&
+        error instanceof Error &&
+        typeof error.message === "string" &&
+        error.message.includes("status 404");
+
+      if (status !== 404 && !is404Message && process.env.NODE_ENV !== "production") {
         console.warn("[maps][amap] New POI candidate fetch failed", error);
       }
 
