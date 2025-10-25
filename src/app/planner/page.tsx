@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { FormEvent } from "react";
+import { createPortal } from "react-dom";
+import type { ComponentProps, FormEvent } from "react";
 import { VoiceRecorder } from "../../../ui/components/VoiceRecorder";
 import { MapView } from "../../../ui/components/MapView";
 import { ItineraryTimeline } from "../../../ui/components/ItineraryTimeline";
@@ -10,6 +11,58 @@ import { DestinationGallery } from "../../../ui/components/DestinationGallery";
 import { mergeParsedInput, parseTravelInput as localParseTravelInput } from "../../core/utils/travelInputParser";
 
 const preferenceOptions = ["美食", "文化", "户外", "亲子", "夜生活", "艺术"];
+
+type FloatingMapOverlayProps = Pick<ComponentProps<typeof MapView>, "markers" | "focusedMarker"> & {
+  onScrollToMap: () => void;
+};
+
+function FloatingMapOverlay({ markers, focusedMarker, onScrollToMap }: FloatingMapOverlayProps) {
+  const [container, setContainer] = useState<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (typeof document === "undefined") {
+      return;
+    }
+
+    const element = document.createElement("div");
+    element.setAttribute("data-floating-map-overlay", "true");
+  element.style.position = "fixed";
+  element.style.bottom = "16px";
+  element.style.right = "16px";
+    element.style.pointerEvents = "none";
+    element.style.zIndex = "9999";
+
+    document.body.appendChild(element);
+    setContainer(element);
+
+    return () => {
+      document.body.removeChild(element);
+    };
+  }, []);
+
+  if (!container) {
+    return null;
+  }
+
+  return createPortal(
+    <div className="pointer-events-none">
+      <div className="pointer-events-auto w-[280px] max-w-[90vw] rounded-2xl border border-slate-800 bg-slate-950/80 p-2 shadow-2xl backdrop-blur">
+        <div className="mb-2 flex items-center justify-between text-xs text-slate-300">
+          <span className="font-medium text-slate-200">快速地图预览</span>
+          <button
+            type="button"
+            onClick={onScrollToMap}
+            className="rounded-md border border-slate-700 px-2 py-1 text-[11px] text-slate-200 transition hover:border-blue-500 hover:text-blue-300"
+          >
+            回到地图
+          </button>
+        </div>
+        <MapView markers={markers} focusedMarker={focusedMarker} compact />
+      </div>
+    </div>,
+    container
+  );
+}
 
 export default function PlannerPage() {
   const {
@@ -44,8 +97,11 @@ export default function PlannerPage() {
   const [locating, setLocating] = useState(false);
   const [locationStatus, setLocationStatus] = useState<string | null>(null);
   const [parsing, setParsing] = useState(false);
+  const [isMapVisible, setIsMapVisible] = useState(true);
+  const [isClient, setIsClient] = useState(false);
   const latestParseIdRef = useRef(0);
   const hasTriedLocateRef = useRef(false);
+  const mapSectionRef = useRef<HTMLDivElement | null>(null);
 
   const knownPreferences = useMemo(
     () => Array.from(new Set([...preferenceOptions, ...form.preferences])),
@@ -238,6 +294,32 @@ export default function PlannerPage() {
   }, [locating, setField]);
 
   useEffect(() => {
+    setIsClient(true);
+  }, []);
+
+  useEffect(() => {
+    const element = mapSectionRef.current;
+
+    if (!element || typeof IntersectionObserver === "undefined") {
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const [entry] = entries;
+        setIsMapVisible(entry?.isIntersecting ?? true);
+      },
+      { threshold: 0.2 }
+    );
+
+    observer.observe(element);
+
+    return () => {
+      observer.disconnect();
+    };
+  }, []);
+
+  useEffect(() => {
     if (hasTriedLocateRef.current) {
       return;
     }
@@ -325,6 +407,20 @@ export default function PlannerPage() {
 
     void applyParsedInput(trimmed, "text");
   };
+
+  const handleScrollToMap = useCallback(() => {
+    mapSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, []);
+
+  const shouldShowFloatingMap = isClient && !isMapVisible && markers.length > 0;
+
+  const floatingMapOverlay = shouldShowFloatingMap ? (
+    <FloatingMapOverlay
+      markers={markers}
+      focusedMarker={focusedMarker ?? undefined}
+      onScrollToMap={handleScrollToMap}
+    />
+  ) : null;
 
   return (
     <section className="flex flex-col gap-10">
@@ -521,7 +617,7 @@ export default function PlannerPage() {
       </form>
 
       <section className="grid gap-6 lg:grid-cols-[1.4fr_1fr]">
-        <div className="space-y-4 rounded-3xl border border-slate-800 bg-slate-900/80 p-4 shadow-xl">
+        <div ref={mapSectionRef} className="space-y-4 rounded-3xl border border-slate-800 bg-slate-900/80 p-4 shadow-xl">
           <header className="flex items-center justify-between">
             <h2 className="text-xl font-semibold text-white">互动地图</h2>
             <span className="text-xs text-slate-400">拖动缩放以查看每日地点</span>
@@ -549,6 +645,7 @@ export default function PlannerPage() {
           <DestinationGallery />
         </div>
       </section>
+      {floatingMapOverlay}
     </section>
   );
 }

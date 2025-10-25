@@ -23,6 +23,7 @@ type MapViewProps = {
     label?: string;
     address?: string;
   } | null;
+  compact?: boolean;
 };
 
 declare global {
@@ -139,7 +140,7 @@ function createNumberedMarkerElement(sequenceLabel: string) {
   return wrapper;
 }
 
-export function MapView({ markers, focusedMarker = null }: MapViewProps) {
+export function MapView({ markers, focusedMarker = null, compact = false }: MapViewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<any>(null);
   const infoWindowRef = useRef<any>(null);
@@ -381,9 +382,14 @@ export function MapView({ markers, focusedMarker = null }: MapViewProps) {
     );
   }
 
+  const containerClassName = compact
+    ? "relative h-48 overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/60"
+    : "relative h-80 overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/60";
+  const minHeight = compact ? "200px" : "320px";
+
   return (
-    <div className="relative h-80 overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/60" aria-label="互动地图">
-      <div ref={containerRef} className="h-full w-full" style={{ minHeight: "320px" }} />
+    <div className={containerClassName} aria-label="互动地图">
+      <div ref={containerRef} className="h-full w-full" style={{ minHeight }} />
       {status === "loading" && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-slate-400">
           地图加载中...
