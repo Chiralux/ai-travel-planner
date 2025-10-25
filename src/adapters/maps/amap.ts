@@ -7,6 +7,21 @@ const AMAP_TEXT_ENDPOINT = "https://restapi.amap.com/v5/place/text";
 const CHINESE_CHAR_REGEX = /[\u4e00-\u9fff]/;
 const LOCATION_SUFFIX_PATTERN = /(特别行政区|自治区|自治州|地区|盟|市|省|县|区)$/u;
 const MATCH_CONFIDENCE_THRESHOLD = 0.75;
+const CITY_APPROXIMATE_COORDS: Record<string, { lat: number; lng: number }> = {
+  北京: { lat: 39.9042, lng: 116.4074 },
+  上海: { lat: 31.2304, lng: 121.4737 },
+  广州: { lat: 23.1291, lng: 113.2644 },
+  深圳: { lat: 22.5431, lng: 114.0579 },
+  南京: { lat: 32.0603, lng: 118.7969 },
+  杭州: { lat: 30.2741, lng: 120.1551 },
+  成都: { lat: 30.5728, lng: 104.0668 },
+  武汉: { lat: 30.5931, lng: 114.3054 },
+  西安: { lat: 34.3416, lng: 108.9398 },
+  重庆: { lat: 29.563, lng: 106.5516 },
+  天津: { lat: 39.3434, lng: 117.3616 },
+  青岛: { lat: 36.0671, lng: 120.3826 },
+  厦门: { lat: 24.4798, lng: 118.0894 }
+};
 
 function normalizeLocationText(value?: string | null): string | null {
   if (!value) {
@@ -30,6 +45,16 @@ function normalizeLocationText(value?: string | null): string | null {
 
 function normalizeMatchText(value: string): string {
   return value.replace(/[^\u4e00-\u9fff0-9a-z]/gi, "").toLowerCase();
+}
+
+function stripAdministrativeSuffix(value: string): string {
+  let normalized = value.trim();
+
+  while (LOCATION_SUFFIX_PATTERN.test(normalized)) {
+    normalized = normalized.replace(LOCATION_SUFFIX_PATTERN, "");
+  }
+
+  return normalized;
 }
 
 function computeMatchConfidence(reference: string, candidate?: string | null): number {
@@ -111,22 +136,89 @@ function poiMatchesDestination(
   return !normalizedDestination;
 }
 
-function withMissingLocationNote(activity: Activity, destination: string): Activity {
-  const locationHint = destination.trim()
-    ? `未能在${destination}范围内找到可信地点，地图上将隐藏此活动。`
-    : "未能找到可信地点，地图上将隐藏此活动。";
-
-  if (activity.note?.includes(locationHint)) {
-    return { ...activity, lat: undefined, lng: undefined, maps_confidence: undefined };
+function appendNote(baseNote: string | undefined, addition: string): string {
+  if (!addition) {
+    return baseNote ?? "";
   }
 
-  const nextNote = activity.note ? `${activity.note}（${locationHint}）` : locationHint;
+  if (!baseNote) {
+    return addition;
+  }
+
+  return baseNote.includes(addition) ? baseNote : `${baseNote}（${addition}）`;
+}
+
+function buildMissingLocationHint(destination: string): string {
+  return destination.trim()
+    ? `未能在${destination}范围内找到可信地点，地图上将隐藏此活动。`
+    : "未能在目的地范围内找到可信地点，地图上将隐藏此活动。";
+}
+
+function buildApproximateLocationHint(destination: string): string {
+  return destination.trim()
+    ? `未能定位到具体地点，已使用${destination}的大致范围。`
+    : "未能定位到具体地点，已使用大致范围。";
+}
+
+function resolveApproximateCoords(destination: string): Pick<Place, "lat" | "lng"> | null {
+  const trimmed = destination.trim();
+
+  if (!trimmed) {
+    return null;
+  }
+
+  const normalized = stripAdministrativeSuffix(trimmed);
+  const candidates = new Set<string>([normalized, trimmed]);
+
+  for (const key of candidates) {
+    const coords = CITY_APPROXIMATE_COORDS[key];
+
+    if (coords) {
+      return { lat: coords.lat, lng: coords.lng };
+    }
+  }
+
+  return null;
+}
+
+function fallbackConfidenceValue(confidence?: number): number {
+  if (typeof confidence !== "number" || Number.isNaN(confidence)) {
+    return 0.5;
+  }
+
+  const normalized = Math.min(Math.max(confidence, 0), 1);
+  return Math.min(Math.max(normalized, 0.2), 0.6);
+}
+
+function createApproximateActivity(activity: Activity, destination: string, place: Place): Activity | null {
+  if (typeof place.lat !== "number" || typeof place.lng !== "number") {
+    return null;
+  }
+
+  const hint = buildApproximateLocationHint(destination);
+  const note = appendNote(activity.note, hint);
+  const mapsConfidence = fallbackConfidenceValue(place.confidence);
+  const approximateAddress = activity.address ?? place.address ?? destination;
+
+  return {
+    ...activity,
+    lat: place.lat,
+    lng: place.lng,
+    address: approximateAddress,
+    note,
+    maps_confidence: mapsConfidence
+  };
+}
+
+function withMissingLocationNote(activity: Activity, destination: string): Activity {
+  const hint = buildMissingLocationHint(destination);
+  const note = appendNote(activity.note, hint);
 
   return {
     ...activity,
     lat: undefined,
     lng: undefined,
-    note: nextNote,
+    note,
     maps_confidence: undefined
   };
 }
@@ -174,7 +266,7 @@ export class AMapClient implements MapsClient {
     const params = new URLSearchParams({
       key: this.apiKey,
       keywords: query,
-  page_size: "5",
+      page_size: "5",
       page_num: "1",
       output: "JSON",
       sortrule: "weight"
@@ -206,7 +298,9 @@ export class AMapClient implements MapsClient {
 
       const best = evaluated[0];
 
-      if (!best || best.confidence < MATCH_CONFIDENCE_THRESHOLD) {
+      const minConfidence = Math.max(0, Math.min(1, options?.minConfidence ?? MATCH_CONFIDENCE_THRESHOLD));
+
+      if (!best || best.confidence < minConfidence) {
         return null;
       }
 
@@ -236,55 +330,106 @@ export class AMapClient implements MapsClient {
 
   async enrichActivities(destination: string, activities: Activity[]): Promise<Activity[]> {
     const enriched: Activity[] = [];
+    let destinationFallback: Place | null | undefined;
+
+    const fetchDestinationFallback = async (): Promise<Place | null> => {
+      if (destinationFallback !== undefined) {
+        return destinationFallback;
+      }
+
+      if (!destination.trim()) {
+        destinationFallback = null;
+        return destinationFallback;
+      }
+
+      try {
+        destinationFallback = await this.geocode(destination, destination, {
+          referenceName: destination,
+          minConfidence: 0.2
+        });
+      } catch {
+        destinationFallback = null;
+      }
+
+      const approximateCoords = resolveApproximateCoords(destination);
+
+      if (
+        (!destinationFallback || destinationFallback.lat === undefined || destinationFallback.lng === undefined) &&
+        approximateCoords
+      ) {
+        destinationFallback = {
+          name: destination.trim() || "目的地",
+          address: destination.trim() || undefined,
+          city: destination.trim() || undefined,
+          lat: approximateCoords.lat,
+          lng: approximateCoords.lng,
+          provider: "amap",
+          confidence: 0.2
+        };
+      }
+
+      return destinationFallback;
+    };
 
     for (const activity of activities) {
       const hasCoords = activity.lat !== undefined && activity.lng !== undefined;
 
-      // If activity already has coordinates, prefer them over geocoding
       if (hasCoords) {
         enriched.push(activity);
         continue;
       }
 
-      // Skip if no title to search for
       if (!activity.title) {
         enriched.push(activity);
         continue;
       }
 
+      let matchedPlace: Place | null = null;
+
       try {
         const searchTerms = this.buildSearchTerms(destination, activity.title, activity.address, activity.note);
 
-        let place: Place | null = null;
-
         for (const term of searchTerms) {
-          place = await this.geocode(term, destination, { referenceName: activity.title });
+          matchedPlace = await this.geocode(term, destination, { referenceName: activity.title });
 
-          if (place) {
+          if (matchedPlace) {
             break;
           }
         }
-
-        if (place) {
-          const originalTitle = activity.title ?? "";
-          const placeName = typeof place.name === "string" ? place.name : undefined;
-          const usePlaceName = !CHINESE_CHAR_REGEX.test(originalTitle) && placeName && CHINESE_CHAR_REGEX.test(placeName);
-          const nextTitle = usePlaceName && placeName ? placeName : originalTitle;
-          const nextAddress = activity.address ?? place.address;
-
-          // Only use geocoded coordinates if activity doesn't already have them
-          enriched.push({
-            ...activity,
-            lat: place.lat,
-            lng: place.lng,
-            address: nextAddress,
-            title: nextTitle,
-            maps_confidence: place.confidence
-          });
-          continue;
-        }
       } catch {
         /* swallow to keep soft failure */
+      }
+
+      if (matchedPlace && typeof matchedPlace.lat === "number" && typeof matchedPlace.lng === "number") {
+        const originalTitle = activity.title ?? "";
+        const placeName = typeof matchedPlace.name === "string" ? matchedPlace.name : undefined;
+        const usePlaceName =
+          !CHINESE_CHAR_REGEX.test(originalTitle) && placeName && CHINESE_CHAR_REGEX.test(placeName);
+        const nextTitle = usePlaceName && placeName ? placeName : originalTitle;
+        const nextAddress = activity.address ?? matchedPlace.address;
+
+        enriched.push({
+          ...activity,
+          lat: matchedPlace.lat,
+          lng: matchedPlace.lng,
+          address: nextAddress,
+          title: nextTitle,
+          maps_confidence:
+            typeof matchedPlace.confidence === "number"
+              ? Math.min(Math.max(matchedPlace.confidence, 0), 1)
+              : undefined
+        });
+        continue;
+      }
+
+      const fallbackPlace = await fetchDestinationFallback();
+      const approximateActivity = fallbackPlace
+        ? createApproximateActivity(activity, destination, fallbackPlace)
+        : null;
+
+      if (approximateActivity) {
+        enriched.push(approximateActivity);
+        continue;
       }
 
       enriched.push(withMissingLocationNote(activity, destination));

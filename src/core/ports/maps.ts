@@ -18,6 +18,7 @@ export type Place = {
 
 export type GeocodeOptions = {
   referenceName?: string;
+  minConfidence?: number;
 };
 
 export interface MapsClient {
