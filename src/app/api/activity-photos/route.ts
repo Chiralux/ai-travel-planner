@@ -1,170 +1,153 @@
 import { NextRequest, NextResponse } from "next/server";
 import { loadEnv } from "../../../core/config/env";
 
-const AMAP_ADVANCED_ENDPOINT = "https://restapi.amap.com/v5/place/advanced";
-const WIKIPEDIA_ENDPOINTS = [
-  "https://zh.wikipedia.org/w/api.php",
-  "https://en.wikipedia.org/w/api.php"
-];
+const AMAP_TEXT_ENDPOINT = "https://restapi.amap.com/v5/place/text";
+const DEFAULT_PAGE_SIZE = 5;
+const DEFAULT_LIMIT = 2;
 
-async function fetchAmapPhotos(query: string, region?: string): Promise<string[]> {
-  const env = loadEnv();
-  const apiKey = env.AMAP_REST_KEY;
+type AMapPhoto = {
+  url?: string;
+};
 
-  if (!apiKey) {
-    return [];
+type AMapPoi = {
+  photos?: AMapPhoto[];
+};
+
+type AMapPoiResponse = {
+  status?: string;
+  info?: string;
+  infocode?: string;
+  pois?: AMapPoi[];
+};
+
+function sanitizeUrl(value?: string | null): string | null {
+  if (!value || typeof value !== "string") {
+    return null;
   }
 
-  const params = new URLSearchParams({
-    key: apiKey,
-    keywords: query,
-    page_size: "5",
-    page_num: "1",
-    show_fields: "photos"
-  });
+  const trimmed = value.trim();
 
-  if (region) {
-    params.set("region", region);
-    params.set("city", region);
+  if (!trimmed) {
+    return null;
   }
 
   try {
-    const response = await fetch(`${AMAP_ADVANCED_ENDPOINT}?${params.toString()}`, {
-      cache: "no-store"
-    });
+    const url = new URL(trimmed);
 
-    if (!response.ok) {
-      return [];
+    if (!url.protocol.startsWith("http")) {
+      return null;
     }
 
-    const data: unknown = await response.json();
-    const pois = Array.isArray((data as { pois?: unknown }).pois) ? (data as { pois: unknown[] }).pois : [];
-    const photos: string[] = [];
-
-    for (const poi of pois) {
-      const rawPhotos = Array.isArray((poi as { photos?: unknown }).photos)
-        ? ((poi as { photos: unknown[] }).photos)
-        : [];
-
-      for (const photo of rawPhotos) {
-        const candidate =
-          (photo as { url?: unknown }).url ??
-          (photo as { photo_url?: unknown }).photo_url ??
-          (photo as { photo?: unknown }).photo;
-
-        if (typeof candidate === "string" && candidate.startsWith("http")) {
-          photos.push(candidate);
-        }
-
-        if (photos.length >= 6) {
-          break;
-        }
-      }
-
-      if (photos.length >= 6) {
-        break;
-      }
-    }
-
-    return photos.slice(0, 6);
-  } catch (error) {
-    if (process.env.NODE_ENV !== "production") {
-      console.warn("[activity-photos] amap lookup failed", error);
-    }
-
-    return [];
+    return url.toString();
+  } catch {
+    return null;
   }
 }
 
-async function fetchPhotoCandidates(query: string): Promise<string[]> {
-  const params = new URLSearchParams({
-    action: "query",
-    format: "json",
-    prop: "pageimages",
-    piprop: "original",
-    pilicense: "any",
-    generator: "prefixsearch",
-    gpssearch: query,
-    gpslimit: "6",
-    pithumbsize: "600"
-  });
-
-  for (const endpoint of WIKIPEDIA_ENDPOINTS) {
-    try {
-      const url = `${endpoint}?${params.toString()}`;
-      const response = await fetch(url, {
-        headers: {
-          "User-Agent": "ai-travel-planner/1.0 (https://github.com/Chiralux/ai-travel-planner)"
-        },
-        cache: "no-store"
-      });
-
-      if (!response.ok) {
-        continue;
-      }
-
-      const data = await response.json();
-      const pages = data?.query?.pages;
-
-      if (!pages) {
-        continue;
-      }
-
-      const urls: string[] = [];
-
-      for (const pageId of Object.keys(pages)) {
-        const page = pages[pageId];
-        const source: unknown = page?.original?.source;
-
-        if (typeof source === "string" && source.startsWith("https://")) {
-          urls.push(source);
-        }
-
-        if (urls.length >= 4) {
-          break;
-        }
-      }
-
-      if (urls.length > 0) {
-        return urls;
-      }
-    } catch {
-      // Try next endpoint
-    }
+function clampLimit(limit: number | null): number {
+  if (limit == null || !Number.isFinite(limit)) {
+    return DEFAULT_LIMIT;
   }
 
-  return [];
+  return Math.min(Math.max(Math.trunc(limit), 1), 6);
 }
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
-  const rawQuery = searchParams.get("q");
-  const region = searchParams.get("region") ?? undefined;
+  const title = searchParams.get("title")?.trim();
+  const destination = searchParams.get("destination")?.trim();
+  const address = searchParams.get("address")?.trim();
+  const rawLimit = searchParams.get("limit");
+  const limit = clampLimit(rawLimit ? Number(rawLimit) : null);
 
-  if (!rawQuery) {
-    return NextResponse.json({ ok: true, photos: [] });
+  if (!title) {
+    return NextResponse.json({ ok: false, error: "title is required" }, { status: 400 });
   }
 
-  const query = rawQuery.trim().slice(0, 120);
+  const env = loadEnv();
+  const apiKey = env.AMAP_REST_KEY;
 
-  if (!query) {
-    return NextResponse.json({ ok: true, photos: [] });
+  if (!apiKey) {
+    return NextResponse.json({ ok: false, error: "AMAP_REST_KEY not configured" }, { status: 500 });
+  }
+
+  const keywords = [title, address, destination]
+    .map((part) => part?.trim())
+    .filter((part): part is string => Boolean(part))
+    .join(" ")
+    .slice(0, 120);
+
+  const url = new URL(AMAP_TEXT_ENDPOINT);
+  url.searchParams.set("key", apiKey);
+  url.searchParams.set("keywords", keywords || title);
+  url.searchParams.set("page_num", "1");
+  url.searchParams.set("page_size", String(DEFAULT_PAGE_SIZE));
+  url.searchParams.set("output", "JSON");
+  url.searchParams.set("show_fields", "photos");
+
+  if (destination) {
+    url.searchParams.set("region", destination);
+    url.searchParams.set("city", destination);
   }
 
   try {
-    const amapPhotos = await fetchAmapPhotos(query, region);
+    const upstream = await fetch(url.toString(), { cache: "no-store" });
 
-    if (amapPhotos.length > 0) {
-      return NextResponse.json({ ok: true, photos: amapPhotos.slice(0, 4) });
+    if (!upstream.ok) {
+      const text = await upstream.text();
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Failed to request AMap new POI search",
+          status: upstream.status,
+          details: text
+        },
+        { status: 502 }
+      );
     }
 
-    const photos = await fetchPhotoCandidates(query);
-    return NextResponse.json({ ok: true, photos });
+    const json = (await upstream.json()) as AMapPoiResponse;
+
+    if (json.status !== "1" || !Array.isArray(json.pois)) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: json.info || "AMap new POI search returned no results",
+          infocode: json.infocode
+        },
+        { status: 502 }
+      );
+    }
+
+    const photos: string[] = [];
+    const seen = new Set<string>();
+
+    outer: for (const poi of json.pois) {
+      if (!Array.isArray(poi.photos) || poi.photos.length === 0) {
+        continue;
+      }
+
+      for (const photo of poi.photos) {
+        const candidate = sanitizeUrl(photo.url);
+
+        if (!candidate || seen.has(candidate)) {
+          continue;
+        }
+
+        seen.add(candidate);
+        photos.push(candidate);
+
+        if (photos.length >= limit) {
+          break outer;
+        }
+      }
+    }
+
+    return NextResponse.json({ ok: true, data: { photos } }, { status: 200 });
   } catch (error) {
-    if (process.env.NODE_ENV !== "production") {
-      console.warn("[activity-photos] lookup failed", error);
-    }
-
-    return NextResponse.json({ ok: true, photos: [] });
+    return NextResponse.json(
+      { ok: false, error: "Unexpected error", details: error instanceof Error ? error.message : String(error) },
+      { status: 500 }
+    );
   }
 }

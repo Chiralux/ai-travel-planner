@@ -198,12 +198,63 @@ function parsePoiLocation(poi: AMapPoi): { lat?: number; lng?: number } {
   };
 }
 
+function sanitizePhotoUrl(value?: string | null): string | null {
+  if (!value || typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+
+  if (!trimmed) {
+    return null;
+  }
+
+  try {
+    const url = new URL(trimmed);
+
+    if (!url.protocol.startsWith("http")) {
+      return null;
+    }
+
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+function extractPoiPhotos(poi: AMapPoi | undefined): string[] {
+  if (!poi || !Array.isArray(poi.photos) || poi.photos.length === 0) {
+    return [];
+  }
+
+  const seen = new Set<string>();
+  const urls: string[] = [];
+
+  for (const entry of poi.photos) {
+    const candidate = sanitizePhotoUrl(entry?.url);
+
+    if (!candidate || seen.has(candidate)) {
+      continue;
+    }
+
+    seen.add(candidate);
+    urls.push(candidate);
+
+    if (urls.length >= 6) {
+      break;
+    }
+  }
+
+  return urls;
+}
+
 type CandidateEntry = {
   poi: AMapPoi;
   confidence: number;
   term: string;
   lat: number;
   lng: number;
+  photos: string[];
 };
 
 function candidateKey(poi: AMapPoi): string {
@@ -264,6 +315,7 @@ type AMapPoi = {
   cityname?: string;
   adname?: string;
   location?: string;
+  photos?: Array<{ url?: string }>;
 };
 
 type AMapTextResponse = {
@@ -303,7 +355,8 @@ export class AMapClient implements MapsClient {
       page_size: "5",
       page_num: "1",
       output: "JSON",
-      sortrule: "weight"
+      sortrule: "weight",
+      show_fields: "photos"
     });
 
     if (cityOrDestination) {
@@ -388,7 +441,8 @@ export class AMapClient implements MapsClient {
       page_size: "5",
       page_num: "1",
       output: "JSON",
-      sortrule: "weight"
+      sortrule: "weight",
+      show_fields: "photos"
     });
 
     if (cityOrDestination) {
@@ -426,7 +480,8 @@ export class AMapClient implements MapsClient {
           confidence: item.confidence,
           term: query,
           lat: location.lat,
-          lng: location.lng
+          lng: location.lng,
+          photos: extractPoiPhotos(item.poi)
         });
 
         if (candidates.length >= MAX_CANDIDATE_RESULTS) {
@@ -514,6 +569,11 @@ export class AMapClient implements MapsClient {
 
             if (!existing || candidate.confidence > existing.confidence) {
               candidateMap.set(key, candidate);
+              continue;
+            }
+
+            if (existing.photos.length === 0 && candidate.photos.length > 0) {
+              candidateMap.set(key, { ...existing, photos: candidate.photos });
             }
           }
         }
@@ -547,6 +607,8 @@ export class AMapClient implements MapsClient {
               !CHINESE_CHAR_REGEX.test(originalTitle) && CHINESE_CHAR_REGEX.test(placeName);
             const nextTitle = usePlaceName ? placeName : originalTitle;
             const nextAddress = activity.address ?? place.address;
+            const candidatePhotos = best.photos.length > 0 ? best.photos : extractPoiPhotos(best.poi);
+            const nextPhotos = candidatePhotos.length > 0 ? candidatePhotos : activity.photos;
 
             enriched.push({
               ...activity,
@@ -554,7 +616,8 @@ export class AMapClient implements MapsClient {
               lng: place.lng,
               address: nextAddress,
               title: nextTitle,
-              maps_confidence: Math.min(Math.max(place.confidence ?? MATCH_CONFIDENCE_THRESHOLD, 0), 1)
+              maps_confidence: Math.min(Math.max(place.confidence ?? MATCH_CONFIDENCE_THRESHOLD, 0), 1),
+              photos: nextPhotos
             });
             continue;
           }
