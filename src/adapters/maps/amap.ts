@@ -7,6 +7,8 @@ const AMAP_TEXT_ENDPOINT = "https://restapi.amap.com/v5/place/text";
 const CHINESE_CHAR_REGEX = /[\u4e00-\u9fff]/;
 const LOCATION_SUFFIX_PATTERN = /(特别行政区|自治区|自治州|地区|盟|市|省|县|区)$/u;
 const MATCH_CONFIDENCE_THRESHOLD = 0.75;
+const MAX_CANDIDATE_RESULTS = 5;
+const CANDIDATE_CONFIDENCE_GAP = 0.12;
 const CITY_APPROXIMATE_COORDS: Record<string, { lat: number; lng: number }> = {
   北京: { lat: 39.9042, lng: 116.4074 },
   上海: { lat: 31.2304, lng: 121.4737 },
@@ -181,32 +183,64 @@ function resolveApproximateCoords(destination: string): Pick<Place, "lat" | "lng
   return null;
 }
 
-function fallbackConfidenceValue(confidence?: number): number {
-  if (typeof confidence !== "number" || Number.isNaN(confidence)) {
-    return 0.5;
+function parsePoiLocation(poi: AMapPoi): { lat?: number; lng?: number } {
+  if (!poi.location) {
+    return {};
   }
 
-  const normalized = Math.min(Math.max(confidence, 0), 1);
-  return Math.min(Math.max(normalized, 0.2), 0.6);
+  const [lngStr, latStr] = poi.location.split(",");
+  const lng = Number(lngStr);
+  const lat = Number(latStr);
+
+  return {
+    lat: Number.isFinite(lat) ? lat : undefined,
+    lng: Number.isFinite(lng) ? lng : undefined
+  };
 }
 
-function createApproximateActivity(activity: Activity, destination: string, place: Place): Activity | null {
-  if (typeof place.lat !== "number" || typeof place.lng !== "number") {
-    return null;
-  }
+type CandidateEntry = {
+  poi: AMapPoi;
+  confidence: number;
+  term: string;
+  lat: number;
+  lng: number;
+};
 
+function candidateKey(poi: AMapPoi): string {
+  return [poi.name ?? "", poi.address ?? "", poi.adname ?? "", poi.location ?? ""].join("|");
+}
+
+function buildAmbiguityNote(candidates: CandidateEntry[], searchTerms: string[]): string {
+  const descriptions = candidates.map((candidate, index) => {
+    const name = candidate.poi.name ?? "候选地点";
+    const address = candidate.poi.address || candidate.poi.adname || candidate.poi.district || "地址未知";
+    const coords = `${candidate.lat.toFixed(4)},${candidate.lng.toFixed(4)}`;
+    const confidence = candidate.confidence.toFixed(2);
+    return `${index + 1}. ${name}（${address}，置信度${confidence}，关键词: ${candidate.term}，坐标: ${coords}）`;
+  });
+
+  const candidatesText = descriptions.join("；");
+  const keywordCandidates = Array.from(
+    new Set(searchTerms.map((term) => term.trim()).filter((term) => term.length > 0))
+  );
+  const keywordsText = keywordCandidates.length > 0 ? `搜索关键词：${keywordCandidates.slice(0, 5).join(" / ")}` : "";
+  const base = `地图候选待AI确认：${candidatesText}`;
+
+  return keywordsText ? `${base}。${keywordsText}` : base;
+}
+
+function createApproximateActivity(activity: Activity, destination: string, place: Place): Activity {
   const hint = buildApproximateLocationHint(destination);
   const note = appendNote(activity.note, hint);
-  const mapsConfidence = fallbackConfidenceValue(place.confidence);
-  const approximateAddress = activity.address ?? place.address ?? destination;
+  const approximateAddress = activity.address ?? place.address ?? (destination.trim() || undefined);
 
   return {
     ...activity,
-    lat: place.lat,
-    lng: place.lng,
+    lat: undefined,
+    lng: undefined,
     address: approximateAddress,
     note,
-    maps_confidence: mapsConfidence
+    maps_confidence: undefined
   };
 }
 
@@ -328,6 +362,88 @@ export class AMapClient implements MapsClient {
     }
   }
 
+  private async fetchCandidates(
+    term: string,
+    cityOrDestination: string | undefined,
+    referenceName: string
+  ): Promise<CandidateEntry[]> {
+    const query = term.trim();
+
+    if (!query) {
+      return [];
+    }
+
+    if (!this.apiKey) {
+      if (!this.warnedMissingKey && process.env.NODE_ENV !== "production") {
+        console.warn("[maps][amap] Missing AMAP_REST_KEY, skipping geocode lookups.");
+        this.warnedMissingKey = true;
+      }
+
+      return [];
+    }
+
+    const params = new URLSearchParams({
+      key: this.apiKey,
+      keywords: query,
+      page_size: "5",
+      page_num: "1",
+      output: "JSON",
+      sortrule: "weight"
+    });
+
+    if (cityOrDestination) {
+      params.set("region", cityOrDestination);
+      params.set("city", cityOrDestination);
+    }
+
+    try {
+      const response = await requestJson<AMapTextResponse>(`${AMAP_TEXT_ENDPOINT}?${params.toString()}`);
+
+      if (response.status !== "1" || !Array.isArray(response.pois) || response.pois.length === 0) {
+        return [];
+      }
+
+      const filteredPois = response.pois.filter((poiCandidate) =>
+        poiMatchesDestination(cityOrDestination, poiCandidate, referenceName ?? query)
+      );
+
+      const evaluated = filteredPois
+        .map((poi) => ({ poi, confidence: evaluatePoiConfidence(referenceName ?? query, poi) }))
+        .sort((a, b) => b.confidence - a.confidence)
+        .slice(0, MAX_CANDIDATE_RESULTS * 2);
+
+      const candidates: CandidateEntry[] = [];
+
+      for (const item of evaluated) {
+        const location = parsePoiLocation(item.poi);
+
+        if (location.lat === undefined || location.lng === undefined) {
+          continue;
+        }
+
+        candidates.push({
+          poi: item.poi,
+          confidence: item.confidence,
+          term: query,
+          lat: location.lat,
+          lng: location.lng
+        });
+
+        if (candidates.length >= MAX_CANDIDATE_RESULTS) {
+          break;
+        }
+      }
+
+      return candidates;
+    } catch (error) {
+      if (process.env.NODE_ENV !== "production") {
+        console.warn("[maps][amap] Candidate fetch failed", error);
+      }
+
+      return [];
+    }
+  }
+
   async enrichActivities(destination: string, activities: Activity[]): Promise<Activity[]> {
     const enriched: Activity[] = [];
     let destinationFallback: Place | null | undefined;
@@ -384,51 +500,85 @@ export class AMapClient implements MapsClient {
         continue;
       }
 
-      let matchedPlace: Place | null = null;
+      const searchTerms = this.buildSearchTerms(destination, activity.title, activity.address, activity.note);
 
       try {
-        const searchTerms = this.buildSearchTerms(destination, activity.title, activity.address, activity.note);
+        const candidateMap = new Map<string, CandidateEntry>();
 
         for (const term of searchTerms) {
-          matchedPlace = await this.geocode(term, destination, { referenceName: activity.title });
+          const candidates = await this.fetchCandidates(term, destination, activity.title ?? term);
 
-          if (matchedPlace) {
-            break;
+          for (const candidate of candidates) {
+            const key = candidateKey(candidate.poi);
+            const existing = candidateMap.get(key);
+
+            if (!existing || candidate.confidence > existing.confidence) {
+              candidateMap.set(key, candidate);
+            }
           }
+        }
+
+        const sortedCandidates = Array.from(candidateMap.values())
+          .filter((entry) => entry.confidence >= MATCH_CONFIDENCE_THRESHOLD)
+          .sort((a, b) => b.confidence - a.confidence);
+
+        const topCandidates = sortedCandidates.slice(0, MAX_CANDIDATE_RESULTS);
+
+        if (topCandidates.length > 0) {
+          const best = topCandidates[0];
+          const second = topCandidates[1];
+
+          if (!second || best.confidence - second.confidence >= CANDIDATE_CONFIDENCE_GAP) {
+            const bestPoi = best.poi;
+            const place: Place = {
+              name: bestPoi.name ?? (activity.title ?? best.term),
+              address: bestPoi.address || bestPoi.adname || bestPoi.district,
+              city: bestPoi.cityname,
+              lat: best.lat,
+              lng: best.lng,
+              provider: "amap",
+              raw: bestPoi,
+              confidence: best.confidence
+            };
+
+            const originalTitle = activity.title ?? "";
+            const placeName = place.name;
+            const usePlaceName =
+              !CHINESE_CHAR_REGEX.test(originalTitle) && CHINESE_CHAR_REGEX.test(placeName);
+            const nextTitle = usePlaceName ? placeName : originalTitle;
+            const nextAddress = activity.address ?? place.address;
+
+            enriched.push({
+              ...activity,
+              lat: place.lat,
+              lng: place.lng,
+              address: nextAddress,
+              title: nextTitle,
+              maps_confidence: Math.min(Math.max(place.confidence ?? MATCH_CONFIDENCE_THRESHOLD, 0), 1)
+            });
+            continue;
+          }
+
+          const ambiguityNote = buildAmbiguityNote(topCandidates, searchTerms);
+          const note = appendNote(activity.note, ambiguityNote);
+
+          enriched.push({
+            ...activity,
+            lat: undefined,
+            lng: undefined,
+            note,
+            maps_confidence: undefined
+          });
+          continue;
         }
       } catch {
         /* swallow to keep soft failure */
       }
 
-      if (matchedPlace && typeof matchedPlace.lat === "number" && typeof matchedPlace.lng === "number") {
-        const originalTitle = activity.title ?? "";
-        const placeName = typeof matchedPlace.name === "string" ? matchedPlace.name : undefined;
-        const usePlaceName =
-          !CHINESE_CHAR_REGEX.test(originalTitle) && placeName && CHINESE_CHAR_REGEX.test(placeName);
-        const nextTitle = usePlaceName && placeName ? placeName : originalTitle;
-        const nextAddress = activity.address ?? matchedPlace.address;
-
-        enriched.push({
-          ...activity,
-          lat: matchedPlace.lat,
-          lng: matchedPlace.lng,
-          address: nextAddress,
-          title: nextTitle,
-          maps_confidence:
-            typeof matchedPlace.confidence === "number"
-              ? Math.min(Math.max(matchedPlace.confidence, 0), 1)
-              : undefined
-        });
-        continue;
-      }
-
       const fallbackPlace = await fetchDestinationFallback();
-      const approximateActivity = fallbackPlace
-        ? createApproximateActivity(activity, destination, fallbackPlace)
-        : null;
 
-      if (approximateActivity) {
-        enriched.push(approximateActivity);
+      if (fallbackPlace) {
+        enriched.push(createApproximateActivity(activity, destination, fallbackPlace));
         continue;
       }
 

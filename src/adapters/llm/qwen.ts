@@ -1,7 +1,16 @@
 import { loadEnv } from "../../core/config/env";
-import type { GenerateItineraryInput, LLMClient } from "../../core/ports/llm";
+import type {
+  GenerateItineraryInput,
+  LLMClient,
+  LocationRefinementInput,
+  LocationRefinementResult
+} from "../../core/ports/llm";
 import { itinerarySchema } from "../../core/validation/itinerarySchema";
 import { itinerarySystemPrompt, itineraryUserPrompt } from "../../core/prompts/itineraryPrompt";
+import {
+  locationRefinementSystemPrompt,
+  locationRefinementUserPrompt
+} from "../../core/prompts/locationRefinementPrompt";
 
 const DASH_SCOPE_ENDPOINT = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
 
@@ -214,4 +223,142 @@ export class QwenClient implements LLMClient {
 
     return itinerarySchema.parse(normalized);
   }
+
+  async refineActivityLocation(input: LocationRefinementInput): Promise<LocationRefinementResult | null> {
+    const env = loadEnv();
+    const apiKey = env.ALIYUN_DASHSCOPE_API_KEY;
+
+    if (!apiKey) {
+      throw new Error("DashScope API key is required for Qwen client.");
+    }
+
+    const response = await fetch(DASH_SCOPE_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: "qwen3-max",
+        temperature: 0.1,
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content: locationRefinementSystemPrompt
+          },
+          {
+            role: "user",
+            content: locationRefinementUserPrompt({
+              destination: input.destination,
+              activityTitle: input.activityTitle,
+              kind: input.kind,
+              timeSlot: input.timeSlot,
+              existingAddress: input.existingAddress,
+              existingNote: input.existingNote,
+              dayLabel: input.dayLabel,
+              previousActivities: input.previousActivities?.slice(-3)
+            })
+          }
+        ]
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Qwen request failed with ${response.status}`);
+    }
+
+    const payload = await response.json();
+    const content = payload?.choices?.[0]?.message?.content;
+
+    if (!content) {
+      return null;
+    }
+
+    let parsed: unknown;
+
+    try {
+      parsed = typeof content === "string" ? JSON.parse(content) : content;
+    } catch {
+      return null;
+    }
+
+    return normalizeLocationRefinementPayload(parsed);
+  }
+}
+
+function normalizeString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function normalizeStringArray(value: unknown): string[] | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const source = Array.isArray(value) ? value : [value];
+  const normalized = source
+    .map((item) => normalizeString(item))
+    .filter((item): item is string => Boolean(item));
+
+  return normalized.length > 0 ? normalized.slice(0, 5) : undefined;
+}
+
+function normalizeLocationRefinementPayload(payload: unknown): LocationRefinementResult | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+
+  const data = payload as Record<string, unknown>;
+
+  const latSource = data.latitude ?? data.lat;
+  const lngSource = data.longitude ?? data.lng;
+
+  const lat = coerceNumber(latSource);
+  const lng = coerceNumber(lngSource);
+  const confidence = coerceNumber(data.confidence);
+
+  const refinedName = normalizeString(data.refined_name ?? data.refinedName);
+  const addressHint = normalizeString(data.address_hint ?? data.addressHint);
+  const searchQueries = normalizeStringArray(data.search_queries ?? data.searchQueries);
+  const nearbyLandmarks = normalizeStringArray(data.nearby_landmarks ?? data.nearbyLandmarks);
+  const reason = normalizeString(data.reason);
+
+  const result: LocationRefinementResult = {};
+
+  if (refinedName) {
+    result.refinedName = refinedName;
+  }
+
+  if (addressHint) {
+    result.addressHint = addressHint;
+  }
+
+  if (searchQueries) {
+    result.searchQueries = searchQueries;
+  }
+
+  if (nearbyLandmarks) {
+    result.nearbyLandmarks = nearbyLandmarks;
+  }
+
+  if (typeof lat === "number" && typeof lng === "number") {
+    result.lat = lat;
+    result.lng = lng;
+  }
+
+  if (typeof confidence === "number") {
+    result.confidence = confidence;
+  }
+
+  if (reason) {
+    result.reason = reason;
+  }
+
+  return Object.keys(result).length === 0 ? null : result;
 }

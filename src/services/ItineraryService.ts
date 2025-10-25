@@ -1,12 +1,19 @@
 import { createHash } from "crypto";
 import Redis from "ioredis";
 import type { MapsClient } from "../core/ports/maps";
-import type { LLMClient, GenerateItineraryInput } from "../core/ports/llm";
+import type {
+  LLMClient,
+  GenerateItineraryInput,
+  LocationRefinementResult
+} from "../core/ports/llm";
 import { itinerarySchema, type BudgetBreakdown, type Itinerary } from "../core/validation/itinerarySchema";
 import { loadEnv } from "../core/config/env";
 
 const CACHE_PREFIX = "itinerary";
 const DEFAULT_CACHE_TTL_SECONDS = 60 * 60; // 1 hour cache window
+const LLM_LOCATION_CONFIDENCE_THRESHOLD = 0.45;
+const LLM_LOCATION_MIN_CONFIDENCE = 0.35;
+const AI_LOCATION_NOTE = "位置信息由AI辅助推断，请注意核实。";
 
 function createCacheKey(params: GenerateItineraryInput): string {
   const normalized = JSON.stringify(params);
@@ -90,6 +97,167 @@ function mergeBudgetBreakdown(itinerary: Itinerary, totals: BudgetAccumulator): 
   };
 }
 
+type Activity = Itinerary["daily_plan"][number]["activities"][number];
+
+type RefinementContext = {
+  destination: string;
+  dayLabel: string;
+  originalActivities: Activity[];
+  enrichedActivities: Activity[];
+};
+
+function clampConfidence(value: number | undefined, fallback: number): number {
+  const candidate = typeof value === "number" && Number.isFinite(value) ? value : fallback;
+  return Math.min(Math.max(candidate, 0), 1);
+}
+
+function appendNote(base: string | undefined, addition: string): string {
+  if (!addition) {
+    return base ?? "";
+  }
+
+  if (!base) {
+    return addition;
+  }
+
+  return base.includes(addition) ? base : `${base}（${addition}）`;
+}
+
+function hasValidCoordinates(activity: Activity): boolean {
+  return (
+    typeof activity.lat === "number" &&
+    Number.isFinite(activity.lat) &&
+    typeof activity.lng === "number" &&
+    Number.isFinite(activity.lng)
+  );
+}
+
+function needsLocationRefinement(activity: Activity): boolean {
+  const confidence = typeof activity.maps_confidence === "number" ? activity.maps_confidence : undefined;
+
+  if (!hasValidCoordinates(activity)) {
+    return true;
+  }
+
+  if (confidence == null) {
+    return true;
+  }
+
+  return confidence < LLM_LOCATION_CONFIDENCE_THRESHOLD;
+}
+
+function toRefinementPreviousActivities(activities: Activity[]): Array<{ title: string; address?: string }> {
+  return activities.slice(-3).map((entry) => ({
+    title: entry.title,
+    address: entry.address
+  }));
+}
+
+function hasMeaningfulSearchTerms(result: LocationRefinementResult | null): boolean {
+  if (!result) {
+    return false;
+  }
+
+  return Boolean(
+    (result.searchQueries && result.searchQueries.length > 0) ||
+      result.refinedName ||
+      result.addressHint
+  );
+}
+
+function normalizeSearchTerms(destination: string, result: LocationRefinementResult): string[] {
+  const terms = new Set<string>();
+
+  if (result.refinedName) {
+    terms.add(result.refinedName);
+  }
+
+  if (result.addressHint) {
+    terms.add(`${destination}${result.addressHint}`);
+    terms.add(result.addressHint);
+  }
+
+  if (result.searchQueries) {
+    for (const query of result.searchQueries.slice(0, 5)) {
+      if (query) {
+        terms.add(query);
+      }
+    }
+  }
+
+  return Array.from(terms).slice(0, 6);
+}
+
+function validCoordinatesFromResult(result: LocationRefinementResult | null): { lat: number; lng: number } | null {
+  if (!result) {
+    return null;
+  }
+
+  if (typeof result.lat !== "number" || !Number.isFinite(result.lat)) {
+    return null;
+  }
+
+  if (typeof result.lng !== "number" || !Number.isFinite(result.lng)) {
+    return null;
+  }
+
+  const lat = result.lat;
+  const lng = result.lng;
+
+  if (Math.abs(lat) > 90 || Math.abs(lng) > 180) {
+    return null;
+  }
+
+  return { lat, lng };
+}
+
+function applyNearbyLandmarksNote(note: string | undefined, result: LocationRefinementResult | null): string | undefined {
+  if (!result || !result.nearbyLandmarks || result.nearbyLandmarks.length === 0) {
+    return note;
+  }
+
+  const landmarkText = `附近参考: ${result.nearbyLandmarks.join("，")}`;
+  return appendNote(note, landmarkText);
+}
+
+function applyReasonNote(note: string | undefined, result: LocationRefinementResult | null): string | undefined {
+  if (!result || !result.reason) {
+    return note;
+  }
+
+  return appendNote(note, result.reason);
+}
+
+async function geocodeWithCandidateTerms(
+  maps: MapsClient,
+  destination: string,
+  activityTitle: string,
+  terms: string[]
+) {
+  for (const term of terms) {
+    try {
+      const place = await maps.geocode(term, destination, {
+        referenceName: activityTitle,
+        minConfidence: 0.2
+      });
+
+      if (
+        place &&
+        typeof place.lat === "number" &&
+        Number.isFinite(place.lat) &&
+        typeof place.lng === "number" &&
+        Number.isFinite(place.lng)
+      ) {
+        return place;
+      }
+    } catch {
+      // Continue to try the next candidate term.
+    }
+  }
+
+  return null;
+}
+
 export class ItineraryService {
   private readonly llm: LLMClient;
   private readonly maps: MapsClient;
@@ -134,8 +302,14 @@ export class ItineraryService {
 
     for (const day of validated.daily_plan) {
       try {
-        const activities = await this.maps.enrichActivities(validated.destination, day.activities);
-        enrichedDailyPlan.push({ ...day, activities });
+        const enrichedActivities = await this.maps.enrichActivities(validated.destination, day.activities);
+        const refinedActivities = await this.refineLowConfidenceActivities({
+          destination: validated.destination,
+          dayLabel: day.day,
+          originalActivities: day.activities,
+          enrichedActivities
+        });
+        enrichedDailyPlan.push({ ...day, activities: refinedActivities });
       } catch (error) {
         if (process.env.NODE_ENV !== "production") {
           console.warn("[ItineraryService] Activity enrichment failed", error);
@@ -166,5 +340,110 @@ export class ItineraryService {
     }
 
     return finalItinerary;
+  }
+
+  private async refineLowConfidenceActivities(context: RefinementContext): Promise<Activity[]> {
+    const refined: Activity[] = [];
+
+    for (let index = 0; index < context.enrichedActivities.length; index += 1) {
+      const activity = context.enrichedActivities[index];
+      const original = context.originalActivities[index] ?? activity;
+
+      if (!needsLocationRefinement(activity)) {
+        refined.push(activity);
+        continue;
+      }
+
+      let currentActivity = activity;
+
+      try {
+        const result = await this.llm.refineActivityLocation({
+          destination: context.destination,
+          activityTitle: activity.title,
+          kind: activity.kind,
+          timeSlot: original.time_slot ?? activity.time_slot,
+          existingAddress: activity.address ?? original.address,
+          existingNote: activity.note ?? original.note,
+          dayLabel: context.dayLabel,
+          previousActivities: toRefinementPreviousActivities(refined)
+        });
+
+        currentActivity = await this.applyRefinementResult({
+          destination: context.destination,
+          activity,
+          result
+        });
+      } catch (error) {
+        if (process.env.NODE_ENV !== "production") {
+          console.warn("[ItineraryService] LLM location refinement failed", error);
+        }
+      }
+
+      refined.push(currentActivity);
+    }
+
+    return refined;
+  }
+
+  private async applyRefinementResult(params: {
+    destination: string;
+    activity: Activity;
+    result: LocationRefinementResult | null;
+  }): Promise<Activity> {
+    const { destination, activity, result } = params;
+
+    if (!result) {
+      return activity;
+    }
+
+    const coordinates = validCoordinatesFromResult(result);
+
+    if (coordinates) {
+      let note: string | undefined = appendNote(activity.note, AI_LOCATION_NOTE);
+      note = applyNearbyLandmarksNote(note, result);
+      note = applyReasonNote(note, result);
+
+      return {
+        ...activity,
+        lat: coordinates.lat,
+        lng: coordinates.lng,
+        address: result.addressHint ?? activity.address,
+        note,
+        maps_confidence: clampConfidence(result.confidence, LLM_LOCATION_MIN_CONFIDENCE)
+      };
+    }
+
+    if (result && hasMeaningfulSearchTerms(result)) {
+      const terms = normalizeSearchTerms(destination, result);
+      const place = await geocodeWithCandidateTerms(this.maps, destination, activity.title, terms);
+
+      if (place) {
+        let note: string | undefined = appendNote(activity.note, AI_LOCATION_NOTE);
+        note = applyNearbyLandmarksNote(note, result);
+        note = applyReasonNote(note, result);
+
+        return {
+          ...activity,
+          lat: place.lat ?? activity.lat,
+          lng: place.lng ?? activity.lng,
+          address: place.address ?? result.addressHint ?? activity.address,
+          note,
+          maps_confidence: clampConfidence(place.confidence, LLM_LOCATION_MIN_CONFIDENCE)
+        };
+      }
+    }
+
+    let note: string | undefined = applyNearbyLandmarksNote(activity.note, result);
+    note = applyReasonNote(note, result);
+
+    if (note === activity.note && (!result.addressHint || result.addressHint === activity.address)) {
+      return activity;
+    }
+
+    return {
+      ...activity,
+      address: activity.address ?? result.addressHint,
+      note
+    };
   }
 }

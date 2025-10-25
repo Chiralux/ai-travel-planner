@@ -23,6 +23,7 @@ export type GenerateItineraryInput = {
 
 export interface LLMClient {
   generateItinerary(params: GenerateItineraryInput): Promise<Itinerary>;
+  refineActivityLocation(input: LocationRefinementInput): Promise<LocationRefinementResult | null>;
 }
 
 export type LLMProvider = "qwen" | "openai";
@@ -33,6 +34,28 @@ export type LLMResponse = {
 };
 
 export type NormalizedActivity = Activity;
+
+export type LocationRefinementInput = {
+  destination: string;
+  activityTitle: string;
+  kind?: string;
+  timeSlot?: string;
+  existingAddress?: string;
+  existingNote?: string;
+  dayLabel?: string;
+  previousActivities?: Array<{ title: string; address?: string }>;
+};
+
+export type LocationRefinementResult = {
+  refinedName?: string;
+  addressHint?: string;
+  searchQueries?: string[];
+  nearbyLandmarks?: string[];
+  lat?: number;
+  lng?: number;
+  confidence?: number;
+  reason?: string;
+};
 
 export function createLLMClient(provider?: string): LLMClient {
   const env = loadEnv();

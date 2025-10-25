@@ -132,32 +132,18 @@ function resolveApproximateCoords(destination: string): Pick<Place, "lat" | "lng
   return null;
 }
 
-function fallbackConfidenceValue(confidence?: number): number {
-  if (typeof confidence !== "number" || Number.isNaN(confidence)) {
-    return 0.5;
-  }
-
-  const normalized = Math.min(Math.max(confidence, 0), 1);
-  return Math.min(Math.max(normalized, 0.2), 0.6);
-}
-
-function createApproximateActivity(activity: Activity, destination: string, place: Place): Activity | null {
-  if (typeof place.lat !== "number" || typeof place.lng !== "number") {
-    return null;
-  }
-
+function createApproximateActivity(activity: Activity, destination: string, place: Place): Activity {
   const hint = buildApproximateLocationHint(destination);
   const note = appendNote(activity.note, hint);
-  const mapsConfidence = fallbackConfidenceValue(place.confidence);
-  const approximateAddress = activity.address ?? place.address ?? destination;
+  const approximateAddress = activity.address ?? place.address ?? (destination.trim() || undefined);
 
   return {
     ...activity,
-    lat: place.lat,
-    lng: place.lng,
+    lat: undefined,
+    lng: undefined,
     address: approximateAddress,
     note,
-    maps_confidence: mapsConfidence
+    maps_confidence: undefined
   };
 }
 
@@ -414,12 +400,9 @@ export class BaiduMapClient implements MapsClient {
       }
 
       const fallbackPlace = await fetchDestinationFallback();
-      const approximateActivity = fallbackPlace
-        ? createApproximateActivity(activity, destination, fallbackPlace)
-        : null;
 
-      if (approximateActivity) {
-        enriched.push(approximateActivity);
+      if (fallbackPlace) {
+        enriched.push(createApproximateActivity(activity, destination, fallbackPlace));
         continue;
       }
 
