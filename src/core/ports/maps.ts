@@ -13,10 +13,15 @@ export type Place = {
   lng?: number;
   provider: MapsProvider;
   raw?: unknown;
+  confidence?: number;
+};
+
+export type GeocodeOptions = {
+  referenceName?: string;
 };
 
 export interface MapsClient {
-  geocode(name: string, cityOrDestination?: string): Promise<Place | null>;
+  geocode(name: string, cityOrDestination?: string, options?: GeocodeOptions): Promise<Place | null>;
   enrichActivities(destination: string, activities: Activity[]): Promise<Activity[]>;
 }
 

@@ -46,6 +46,21 @@ const defaultForm: PlannerForm = {
   preferences: []
 };
 
+const formatAddressWithConfidence = (address?: string, confidence?: number): string | undefined => {
+  if (!address) {
+    return undefined;
+  }
+
+  if (typeof confidence !== "number" || Number.isNaN(confidence)) {
+    return address;
+  }
+
+  const percent = Math.round(confidence * 100);
+  const clamped = Math.min(Math.max(percent, 0), 100);
+
+  return `${address}（置信度 ${clamped}%）`;
+};
+
 export const usePlannerStore = create<PlannerState>((set) => ({
   form: defaultForm,
   result: null,
@@ -126,6 +141,8 @@ export const mapMarkersSelector = (state: PlannerState) => {
 
   for (const day of state.result.daily_plan) {
     for (const activity of day.activities) {
+      const currentSequence = sequence;
+      sequence += 1;
       const coords = normalizeCoords(activity.lat, activity.lng);
 
       if (coords) {
@@ -133,8 +150,8 @@ export const mapMarkersSelector = (state: PlannerState) => {
           lat: coords.lat,
           lng: coords.lng,
           label: activity.title,
-          address: activity.address,
-          sequence: sequence++
+          address: formatAddressWithConfidence(activity.address, activity.maps_confidence),
+          sequence: currentSequence
         });
       }
     }

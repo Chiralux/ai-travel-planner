@@ -15,6 +15,17 @@ type ItineraryTimelineProps = {
   onActivityFocus?: (marker: FocusableMarker) => void;
 };
 
+function formatConfidenceLabel(confidence?: number): string | null {
+  if (typeof confidence !== "number" || Number.isNaN(confidence)) {
+    return null;
+  }
+
+  const percent = Math.round(confidence * 100);
+  const clamped = Math.min(Math.max(percent, 0), 100);
+
+  return `置信度 ${clamped}%`;
+}
+
 export function ItineraryTimeline({ itinerary, onActivityFocus }: ItineraryTimelineProps) {
   if (!itinerary) {
     return <p className="text-sm text-slate-400">生成行程后会显示详细日程安排。</p>;
@@ -39,13 +50,17 @@ export function ItineraryTimeline({ itinerary, onActivityFocus }: ItineraryTimel
             <p className="text-sm text-slate-500">暂无活动安排。</p>) : (
             <ol className="space-y-3">
               {day.activities.map((activity, index) => {
+                const confidenceLabel = formatConfidenceLabel(activity.maps_confidence);
+                const addressLine = activity.address
+                  ? `${activity.address}${confidenceLabel ? `（${confidenceLabel}）` : ""}`
+                  : null;
                 const hasCoords = typeof activity.lat === "number" && typeof activity.lng === "number";
                 const focusPayload = hasCoords
                   ? {
                       lat: activity.lat as number,
                       lng: activity.lng as number,
                       label: activity.title,
-                      address: activity.address
+                      address: addressLine ?? activity.address
                     }
                   : null;
 
@@ -82,8 +97,10 @@ export function ItineraryTimeline({ itinerary, onActivityFocus }: ItineraryTimel
                       <span className="text-xs text-slate-400">{activity.time_slot}</span>
                     )}
                   </div>
-                  <div className="text-sm text-slate-400">
-                    {activity.note ?? activity.address ?? "暂无补充说明"}
+                  <div className="space-y-1 text-sm text-slate-400">
+                    {activity.note && <p>{activity.note}</p>}
+                    {addressLine && <p>{addressLine}</p>}
+                    {!activity.note && !addressLine && <p>暂无补充说明</p>}
                   </div>
                   <div className="flex flex-wrap gap-2 text-xs text-slate-500">
                     <span className="rounded bg-slate-800/80 px-2 py-0.5 uppercase">{activity.kind}</span>

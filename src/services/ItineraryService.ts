@@ -130,7 +130,7 @@ export class ItineraryService {
     const generated = await this.llm.generateItinerary(params);
     const validated = itinerarySchema.parse(generated);
 
-  const enrichedDailyPlan: Itinerary["daily_plan"] = [];
+    const enrichedDailyPlan: Itinerary["daily_plan"] = [];
 
     for (const day of validated.daily_plan) {
       try {

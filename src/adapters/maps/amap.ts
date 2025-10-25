@@ -1,10 +1,135 @@
 import { loadEnv } from "../../core/config/env";
-import type { MapsClient, Place } from "../../core/ports/maps";
+import type { GeocodeOptions, MapsClient, Place } from "../../core/ports/maps";
 import type { Activity } from "../../core/validation/itinerarySchema";
 import { requestJson } from "./shared";
 
 const AMAP_TEXT_ENDPOINT = "https://restapi.amap.com/v5/place/text";
 const CHINESE_CHAR_REGEX = /[\u4e00-\u9fff]/;
+const LOCATION_SUFFIX_PATTERN = /(特别行政区|自治区|自治州|地区|盟|市|省|县|区)$/u;
+const MATCH_CONFIDENCE_THRESHOLD = 0.75;
+
+function normalizeLocationText(value?: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+
+  const chineseOnly = value.replace(new RegExp("[^\\u4e00-\\u9fff]", "gu"), "");
+
+  if (!chineseOnly) {
+    return null;
+  }
+
+  let normalized = chineseOnly;
+
+  while (LOCATION_SUFFIX_PATTERN.test(normalized)) {
+    normalized = normalized.replace(LOCATION_SUFFIX_PATTERN, "");
+  }
+
+  return normalized || null;
+}
+
+function normalizeMatchText(value: string): string {
+  return value.replace(/[^\u4e00-\u9fff0-9a-z]/gi, "").toLowerCase();
+}
+
+function computeMatchConfidence(reference: string, candidate?: string | null): number {
+  if (!candidate) {
+    return 0;
+  }
+
+  const normalizedQuery = normalizeMatchText(reference);
+  const normalizedCandidate = normalizeMatchText(candidate);
+
+  if (!normalizedQuery || !normalizedCandidate) {
+    return 0;
+  }
+
+  if (
+    normalizedQuery.includes(normalizedCandidate) ||
+    normalizedCandidate.includes(normalizedQuery)
+  ) {
+    return 1;
+  }
+
+  const queryChars = new Set(Array.from(normalizedQuery));
+  const candidateChars = new Set(Array.from(normalizedCandidate));
+  let intersection = 0;
+
+  for (const char of candidateChars) {
+    if (queryChars.has(char)) {
+      intersection += 1;
+    }
+  }
+
+  const smallestSize = Math.min(queryChars.size, candidateChars.size);
+
+  if (smallestSize === 0) {
+    return 0;
+  }
+
+  return intersection / smallestSize;
+}
+
+function evaluatePoiConfidence(reference: string, poi: AMapPoi): number {
+  const confidenceSources = [poi.name, poi.address, poi.adname, poi.district];
+  const confidences = confidenceSources.map((source) => computeMatchConfidence(reference, source));
+  return Math.max(...confidences, 0);
+}
+
+function poiMatchesDestination(
+  destination: string | undefined,
+  poi: AMapPoi,
+  queryHint?: string
+): boolean {
+  const normalizedDestination = normalizeLocationText(destination);
+  const normalizedQueryHint = normalizeLocationText(queryHint);
+
+  const candidates = [poi.cityname, poi.adname, poi.district, poi.address, poi.name]
+    .map((candidate) => normalizeLocationText(candidate))
+    .filter((candidate): candidate is string => Boolean(candidate));
+
+  if (candidates.length === 0) {
+    return false;
+  }
+
+  if (normalizedDestination) {
+    const matchesDestination = candidates.some((candidate) => {
+      return normalizedDestination.includes(candidate) || candidate.includes(normalizedDestination);
+    });
+
+    if (matchesDestination) {
+      return true;
+    }
+  }
+
+  if (normalizedQueryHint) {
+    return candidates.some((candidate) => {
+      return normalizedQueryHint.includes(candidate) || candidate.includes(normalizedQueryHint);
+    });
+  }
+
+  return !normalizedDestination;
+}
+
+function withMissingLocationNote(activity: Activity, destination: string): Activity {
+  const locationHint = destination.trim()
+    ? `未能在${destination}范围内找到可信地点，地图上将隐藏此活动。`
+    : "未能找到可信地点，地图上将隐藏此活动。";
+
+  if (activity.note?.includes(locationHint)) {
+    return { ...activity, lat: undefined, lng: undefined, maps_confidence: undefined };
+  }
+
+  const nextNote = activity.note ? `${activity.note}（${locationHint}）` : locationHint;
+
+  return {
+    ...activity,
+    lat: undefined,
+    lng: undefined,
+    note: nextNote,
+    maps_confidence: undefined
+  };
+}
 
 type AMapPoi = {
   name?: string;
@@ -30,7 +155,7 @@ export class AMapClient implements MapsClient {
     this.apiKey = apiKey ?? env.AMAP_REST_KEY;
   }
 
-  async geocode(name: string, cityOrDestination?: string): Promise<Place | null> {
+  async geocode(name: string, cityOrDestination?: string, options?: GeocodeOptions): Promise<Place | null> {
     const query = name.trim();
 
     if (!query) {
@@ -49,7 +174,7 @@ export class AMapClient implements MapsClient {
     const params = new URLSearchParams({
       key: this.apiKey,
       keywords: query,
-      page_size: "1",
+  page_size: "5",
       page_num: "1",
       output: "JSON",
       sortrule: "weight"
@@ -67,7 +192,25 @@ export class AMapClient implements MapsClient {
         return null;
       }
 
-      const poi = response.pois[0];
+      const filteredPois = response.pois.filter((poiCandidate) =>
+        poiMatchesDestination(cityOrDestination, poiCandidate, options?.referenceName ?? query)
+      );
+
+      if (filteredPois.length === 0) {
+        return null;
+      }
+
+      const evaluated = filteredPois
+        .map((poi) => ({ poi, confidence: evaluatePoiConfidence(options?.referenceName ?? query, poi) }))
+        .sort((a, b) => b.confidence - a.confidence);
+
+      const best = evaluated[0];
+
+      if (!best || best.confidence < MATCH_CONFIDENCE_THRESHOLD) {
+        return null;
+      }
+
+      const poi = best.poi;
       const [lngStr, latStr] = (poi.location ?? "").split(",");
       const lng = Number(lngStr);
       const lat = Number(latStr);
@@ -79,7 +222,8 @@ export class AMapClient implements MapsClient {
         lat: Number.isFinite(lat) ? lat : undefined,
         lng: Number.isFinite(lng) ? lng : undefined,
         provider: "amap",
-        raw: poi
+        raw: poi,
+        confidence: best.confidence
       };
     } catch (error) {
       if (process.env.NODE_ENV !== "production") {
@@ -114,7 +258,7 @@ export class AMapClient implements MapsClient {
         let place: Place | null = null;
 
         for (const term of searchTerms) {
-          place = await this.geocode(term, destination);
+          place = await this.geocode(term, destination, { referenceName: activity.title });
 
           if (place) {
             break;
@@ -134,7 +278,8 @@ export class AMapClient implements MapsClient {
             lat: place.lat,
             lng: place.lng,
             address: nextAddress,
-            title: nextTitle
+            title: nextTitle,
+            maps_confidence: place.confidence
           });
           continue;
         }
@@ -142,7 +287,7 @@ export class AMapClient implements MapsClient {
         /* swallow to keep soft failure */
       }
 
-      enriched.push(activity);
+      enriched.push(withMissingLocationNote(activity, destination));
     }
 
     return enriched;

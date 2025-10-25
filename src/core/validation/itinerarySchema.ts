@@ -10,7 +10,8 @@ const activitySchema = z
     lat: z.number().optional(),
     lng: z.number().optional(),
     address: z.string().optional(),
-    cost_estimate: z.number().nonnegative().optional()
+    cost_estimate: z.number().nonnegative().optional(),
+    maps_confidence: z.number().min(0).max(1).optional()
   })
   .describe("Single itinerary activity entry");
 
