@@ -29,7 +29,6 @@ function FloatingMapOverlay({ markers, focusedMarker, onScrollToMap }: FloatingM
     element.style.position = "fixed";
     element.style.bottom = "16px";
     element.style.right = "16px";
-    element.style.pointerEvents = "none";
     element.style.zIndex = "9999";
 
     document.body.appendChild(element);
@@ -42,46 +41,13 @@ function FloatingMapOverlay({ markers, focusedMarker, onScrollToMap }: FloatingM
     };
   }, []);
 
-  const fallbackMarker = useMemo(() => {
-    if (!markers || markers.length === 0) {
-      return null;
-    }
-
-    return markers.find((marker) => {
-      return Boolean(
-        marker.label ||
-        marker.address ||
-        (Array.isArray(marker.sequenceGroup) && marker.sequenceGroup.length > 0)
-      );
-    }) ?? markers[0];
-  }, [markers]);
-
-  const activeMarker = focusedMarker ?? (fallbackMarker
-    ? {
-        lat: fallbackMarker.lat,
-        lng: fallbackMarker.lng,
-        label:
-          fallbackMarker.label ??
-          fallbackMarker.sequenceGroup?.[0]?.label ??
-          fallbackMarker.sequenceLabel ??
-          undefined,
-        address:
-          fallbackMarker.address ??
-          fallbackMarker.sequenceGroup?.[0]?.address ??
-          undefined
-      }
-    : undefined);
-
-  const markerTitle = activeMarker?.label;
-  const markerAddress = activeMarker?.address;
-
   if (!container) {
     return null;
   }
 
   return createPortal(
-    <div className="pointer-events-none">
-      <div className="pointer-events-auto w-[280px] max-w-[90vw] rounded-2xl border border-slate-800 bg-slate-950/80 p-2 shadow-2xl backdrop-blur">
+    <div>
+      <div className="w-[280px] max-w-[90vw] rounded-2xl border border-slate-800 bg-slate-950/80 p-2 shadow-2xl backdrop-blur">
         <div className="mb-2 flex items-center justify-between text-xs text-slate-300">
           <span className="font-medium text-slate-200">快速地图预览</span>
           <button
@@ -93,12 +59,6 @@ function FloatingMapOverlay({ markers, focusedMarker, onScrollToMap }: FloatingM
           </button>
         </div>
         <MapView markers={markers} focusedMarker={focusedMarker} compact showInfoWindow={false} />
-        {(markerTitle || markerAddress) && (
-          <div className="mt-2 rounded-xl border border-slate-800/70 bg-slate-900/70 p-2 text-xs text-slate-300">
-            {markerTitle && <p className="font-medium text-slate-100">{markerTitle}</p>}
-            {markerAddress && <p className="mt-1 leading-relaxed text-slate-400">{markerAddress}</p>}
-          </div>
-        )}
       </div>
     </div>,
     container
@@ -450,8 +410,23 @@ export default function PlannerPage() {
   };
 
   const handleScrollToMap = useCallback(() => {
-    mapSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
-  }, []);
+    if (!mapSectionRef.current) {
+      return;
+    }
+
+    mapSectionRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+
+    // Optimistically hide the floating map so the main map becomes the focus immediately.
+    setIsMapVisible(true);
+
+    // Ensure the section gets focus for accessibility if the map supports keyboard interaction.
+    if (typeof mapSectionRef.current.focus === "function" && typeof window !== "undefined") {
+      // Delay focus slightly to align with scroll behavior.
+      window.requestAnimationFrame(() => {
+        mapSectionRef.current?.focus?.({ preventScroll: true });
+      });
+    }
+  }, [setIsMapVisible]);
 
   const shouldShowFloatingMap = isClient && !isMapVisible && markers.length > 0;
 
@@ -658,7 +633,11 @@ export default function PlannerPage() {
       </form>
 
       <section className="grid gap-6 lg:grid-cols-[1.4fr_1fr]">
-        <div ref={mapSectionRef} className="space-y-4 rounded-3xl border border-slate-800 bg-slate-900/80 p-4 shadow-xl">
+        <div
+          ref={mapSectionRef}
+          tabIndex={-1}
+          className="space-y-4 rounded-3xl border border-slate-800 bg-slate-900/80 p-4 shadow-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+        >
           <header className="flex items-center justify-between">
             <h2 className="text-xl font-semibold text-white">互动地图</h2>
             <span className="text-xs text-slate-400">拖动缩放以查看每日地点</span>
