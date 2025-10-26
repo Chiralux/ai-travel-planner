@@ -26,9 +26,9 @@ function FloatingMapOverlay({ markers, focusedMarker, onScrollToMap }: FloatingM
 
     const element = document.createElement("div");
     element.setAttribute("data-floating-map-overlay", "true");
-  element.style.position = "fixed";
-  element.style.bottom = "16px";
-  element.style.right = "16px";
+    element.style.position = "fixed";
+    element.style.bottom = "16px";
+    element.style.right = "16px";
     element.style.pointerEvents = "none";
     element.style.zIndex = "9999";
 
@@ -36,9 +36,44 @@ function FloatingMapOverlay({ markers, focusedMarker, onScrollToMap }: FloatingM
     setContainer(element);
 
     return () => {
-      document.body.removeChild(element);
+      if (element.parentNode) {
+        element.parentNode.removeChild(element);
+      }
     };
   }, []);
+
+  const fallbackMarker = useMemo(() => {
+    if (!markers || markers.length === 0) {
+      return null;
+    }
+
+    return markers.find((marker) => {
+      return Boolean(
+        marker.label ||
+        marker.address ||
+        (Array.isArray(marker.sequenceGroup) && marker.sequenceGroup.length > 0)
+      );
+    }) ?? markers[0];
+  }, [markers]);
+
+  const activeMarker = focusedMarker ?? (fallbackMarker
+    ? {
+        lat: fallbackMarker.lat,
+        lng: fallbackMarker.lng,
+        label:
+          fallbackMarker.label ??
+          fallbackMarker.sequenceGroup?.[0]?.label ??
+          fallbackMarker.sequenceLabel ??
+          undefined,
+        address:
+          fallbackMarker.address ??
+          fallbackMarker.sequenceGroup?.[0]?.address ??
+          undefined
+      }
+    : undefined);
+
+  const markerTitle = activeMarker?.label;
+  const markerAddress = activeMarker?.address;
 
   if (!container) {
     return null;
@@ -57,7 +92,13 @@ function FloatingMapOverlay({ markers, focusedMarker, onScrollToMap }: FloatingM
             回到地图
           </button>
         </div>
-        <MapView markers={markers} focusedMarker={focusedMarker} compact />
+        <MapView markers={markers} focusedMarker={focusedMarker} compact showInfoWindow={false} />
+        {(markerTitle || markerAddress) && (
+          <div className="mt-2 rounded-xl border border-slate-800/70 bg-slate-900/70 p-2 text-xs text-slate-300">
+            {markerTitle && <p className="font-medium text-slate-100">{markerTitle}</p>}
+            {markerAddress && <p className="mt-1 leading-relaxed text-slate-400">{markerAddress}</p>}
+          </div>
+        )}
       </div>
     </div>,
     container

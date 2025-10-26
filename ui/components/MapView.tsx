@@ -24,6 +24,7 @@ type MapViewProps = {
     address?: string;
   } | null;
   compact?: boolean;
+  showInfoWindow?: boolean;
 };
 
 declare global {
@@ -140,7 +141,7 @@ function createNumberedMarkerElement(sequenceLabel: string) {
   return wrapper;
 }
 
-export function MapView({ markers, focusedMarker = null, compact = false }: MapViewProps) {
+export function MapView({ markers, focusedMarker = null, compact = false, showInfoWindow = true }: MapViewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<any>(null);
   const infoWindowRef = useRef<any>(null);
@@ -218,7 +219,11 @@ export function MapView({ markers, focusedMarker = null, compact = false }: MapV
         }
 
         mapRef.current = map;
-        infoWindowRef.current = new AMap.InfoWindow({ offset: new AMap.Pixel(0, -28) });
+        if (showInfoWindow && typeof AMap.InfoWindow === "function") {
+          infoWindowRef.current = new AMap.InfoWindow({ offset: new AMap.Pixel(0, -28) });
+        } else {
+          infoWindowRef.current = null;
+        }
 
         debug("initMap: map ready, markers", validMarkers.length);
         setStatus("ready");
@@ -233,10 +238,12 @@ export function MapView({ markers, focusedMarker = null, compact = false }: MapV
     initMap();
 
     return () => {
-  markerInstancesRef.current.forEach(({ overlay }) => overlay.setMap(null));
+      markerInstancesRef.current.forEach(({ overlay }) => overlay.setMap(null));
       markerInstancesRef.current = [];
+
       infoWindowRef.current?.close?.();
       infoWindowRef.current = null;
+
       mapRef.current?.destroy?.();
       mapRef.current = null;
       setSdkReady(false);
@@ -253,8 +260,8 @@ export function MapView({ markers, focusedMarker = null, compact = false }: MapV
       return;
     }
 
-  markerInstancesRef.current.forEach(({ overlay }) => overlay.setMap(null));
-  markerInstancesRef.current = [];
+    markerInstancesRef.current.forEach(({ overlay }) => overlay.setMap(null));
+    markerInstancesRef.current = [];
 
     if (validMarkers.length === 0) {
       infoWindowRef.current?.close?.();
@@ -289,7 +296,7 @@ export function MapView({ markers, focusedMarker = null, compact = false }: MapV
 
       const overlay = new AMapCtor.Marker(options);
 
-      if (infoWindowRef.current) {
+      if (showInfoWindow && infoWindowRef.current) {
         const content = buildInfoContent(marker);
         overlay.on("mouseover", () => {
           infoWindowRef.current.setContent(content);
@@ -310,7 +317,7 @@ export function MapView({ markers, focusedMarker = null, compact = false }: MapV
       map.setFitView(instances.map((item) => item.overlay));
       debug("markers effect: fit view");
     }
-  }, [validMarkers, status, sdkReady]);
+  }, [validMarkers, status, sdkReady, showInfoWindow]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -356,7 +363,7 @@ export function MapView({ markers, focusedMarker = null, compact = false }: MapV
       }, 150);
     }
 
-    if (infoWindowRef.current) {
+    if (showInfoWindow && infoWindowRef.current) {
       const content = buildInfoContent({
         lat: contentMarker.lat,
         lng: contentMarker.lng,
@@ -372,7 +379,24 @@ export function MapView({ markers, focusedMarker = null, compact = false }: MapV
         window.clearTimeout(recentreTimer);
       }
     };
-  }, [focusedMarker, status]);
+  }, [focusedMarker, status, showInfoWindow]);
+
+  useEffect(() => {
+    const AMapCtor = typeof window !== "undefined" && sdkReady ? window.AMap : undefined;
+
+    if (!AMapCtor) {
+      return;
+    }
+
+    if (showInfoWindow && typeof AMapCtor.InfoWindow === "function") {
+      if (!infoWindowRef.current) {
+        infoWindowRef.current = new AMapCtor.InfoWindow({ offset: new AMapCtor.Pixel(0, -28) });
+      }
+    } else {
+      infoWindowRef.current?.close?.();
+      infoWindowRef.current = null;
+    }
+  }, [showInfoWindow, sdkReady]);
 
   if (status === "error") {
     return (
