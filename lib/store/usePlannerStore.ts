@@ -14,30 +14,27 @@ type PlannerForm = {
   };
 };
 
+type FocusableMarker = {
+  lat: number;
+  lng: number;
+  label?: string;
+  address?: string;
+};
+
 type PlannerState = {
   form: PlannerForm;
   result: Itinerary | null;
   loading: boolean;
   error: string | null;
-  focusedMarker: {
-    lat: number;
-    lng: number;
-    label?: string;
-    address?: string;
-  } | null;
+  focusedMarker: FocusableMarker | null;
+  focusHistory: FocusableMarker[];
   setField: <K extends keyof PlannerForm>(key: K, value: PlannerForm[K]) => void;
   togglePreference: (value: string) => void;
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
   setResult: (itinerary: Itinerary | null) => void;
-  setFocusedMarker: (
-    marker: {
-      lat: number;
-      lng: number;
-      label?: string;
-      address?: string;
-    } | null
-  ) => void;
+  setFocusedMarker: (marker: FocusableMarker | null) => void;
+  goBackToPreviousMarker: () => void;
 };
 
 const defaultForm: PlannerForm = {
@@ -67,6 +64,7 @@ export const usePlannerStore = create<PlannerState>((set) => ({
   loading: false,
   error: null,
   focusedMarker: null,
+  focusHistory: [],
   setField: (key, value) =>
     set((state) => ({
       form: {
@@ -90,8 +88,51 @@ export const usePlannerStore = create<PlannerState>((set) => ({
     }),
   setLoading: (loading) => set({ loading }),
   setError: (error) => set({ error }),
-  setResult: (itinerary) => set({ result: itinerary, focusedMarker: null }),
-  setFocusedMarker: (marker) => set({ focusedMarker: marker })
+  setResult: (itinerary) => set({ result: itinerary, focusedMarker: null, focusHistory: [] }),
+  setFocusedMarker: (marker) =>
+    set((state) => {
+      if (!marker) {
+        return {
+          focusedMarker: null,
+          focusHistory: []
+        };
+      }
+
+      const current = state.focusedMarker;
+      const isSameMarker = current
+        ? Math.abs(current.lat - marker.lat) < 1e-6 &&
+          Math.abs(current.lng - marker.lng) < 1e-6 &&
+          current.label === marker.label &&
+          current.address === marker.address
+        : false;
+
+      if (isSameMarker) {
+        return {};
+      }
+
+      const nextHistory = current
+        ? [...state.focusHistory.slice(-19), current]
+        : state.focusHistory;
+
+      return {
+        focusedMarker: marker,
+        focusHistory: nextHistory
+      };
+    }),
+  goBackToPreviousMarker: () =>
+    set((state) => {
+      if (state.focusHistory.length === 0) {
+        return {};
+      }
+
+      const nextHistory = state.focusHistory.slice(0, -1);
+      const previous = state.focusHistory[state.focusHistory.length - 1];
+
+      return {
+        focusedMarker: previous,
+        focusHistory: nextHistory
+      };
+    })
 }));
 
 export const mapMarkersSelector = (state: PlannerState) => {

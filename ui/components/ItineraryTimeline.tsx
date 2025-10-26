@@ -13,6 +13,7 @@ type FocusableMarker = {
 type ItineraryTimelineProps = {
   itinerary?: Itinerary | null;
   onActivityFocus?: (marker: FocusableMarker) => void;
+  onActivitySelect?: (activityElementId: string) => void;
 };
 
 function formatConfidenceLabel(confidence?: number): string | null {
@@ -26,7 +27,7 @@ function formatConfidenceLabel(confidence?: number): string | null {
   return `置信度 ${clamped}%`;
 }
 
-export function ItineraryTimeline({ itinerary, onActivityFocus }: ItineraryTimelineProps) {
+export function ItineraryTimeline({ itinerary, onActivityFocus, onActivitySelect }: ItineraryTimelineProps) {
   const [expandedActivities, setExpandedActivities] = useState<Set<string>>(() => new Set());
 
   useEffect(() => {
@@ -57,7 +58,7 @@ export function ItineraryTimeline({ itinerary, onActivityFocus }: ItineraryTimel
 
   return (
     <section className="space-y-6">
-      {itinerary.daily_plan.map((day) => (
+      {itinerary.daily_plan.map((day, dayIndex) => (
         <article key={day.day} className="rounded-xl border border-slate-800 bg-slate-900/80 p-5">
           <header className="mb-3 flex items-center justify-between">
             <h3 className="text-lg font-semibold text-white">{day.day}</h3>
@@ -71,6 +72,7 @@ export function ItineraryTimeline({ itinerary, onActivityFocus }: ItineraryTimel
             <ol className="space-y-3">
               {day.activities.map((activity, index) => {
                 const activityKey = `${day.day}-${index}`;
+                const elementId = `timeline-activity-${dayIndex}-${index}`;
                 const isExpanded = expandedActivities.has(activityKey);
                 const confidenceLabel = formatConfidenceLabel(activity.maps_confidence);
                 const addressLine = activity.address
@@ -91,6 +93,7 @@ export function ItineraryTimeline({ itinerary, onActivityFocus }: ItineraryTimel
                   if (focusPayload) {
                     onActivityFocus?.(focusPayload);
                   }
+                  onActivitySelect?.(elementId);
                 };
 
                 const handleKeyDown = (event: KeyboardEvent<HTMLLIElement>) => {
@@ -101,6 +104,7 @@ export function ItineraryTimeline({ itinerary, onActivityFocus }: ItineraryTimel
                   if (event.key === "Enter" || event.key === " ") {
                     event.preventDefault();
                     onActivityFocus?.(focusPayload);
+                    onActivitySelect?.(elementId);
                   }
                 };
 
@@ -112,7 +116,8 @@ export function ItineraryTimeline({ itinerary, onActivityFocus }: ItineraryTimel
                 return (
                   <li
                     key={`${day.day}-${activity.title}-${index}`}
-                    className={`flex flex-col gap-1 rounded-lg border border-slate-800/80 bg-slate-950/60 p-3 ${focusPayload ? "cursor-pointer transition hover:border-blue-500/60" : ""}`}
+                    id={elementId}
+                    className={`flex flex-col gap-1 rounded-lg border border-slate-800/80 bg-slate-950/60 p-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60 ${focusPayload ? "cursor-pointer transition hover:border-blue-500/60" : ""}`}
                     onClick={handleClick}
                     onKeyDown={handleKeyDown}
                     role={focusPayload ? "button" : undefined}

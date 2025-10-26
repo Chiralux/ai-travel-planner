@@ -77,7 +77,9 @@ export default function PlannerPage() {
     setError,
     setResult,
     setFocusedMarker,
-    focusedMarker
+    focusedMarker,
+    goBackToPreviousMarker,
+    focusHistory
   } = usePlannerStore((state) => ({
     form: state.form,
     loading: state.loading,
@@ -89,7 +91,9 @@ export default function PlannerPage() {
     setError: state.setError,
     setResult: state.setResult,
     setFocusedMarker: state.setFocusedMarker,
-    focusedMarker: state.focusedMarker
+    focusedMarker: state.focusedMarker,
+    goBackToPreviousMarker: state.goBackToPreviousMarker,
+    focusHistory: state.focusHistory
   }));
   const markers = usePlannerStore(mapMarkersSelector);
   const [voiceMessage, setVoiceMessage] = useState<string | null>(null);
@@ -100,6 +104,7 @@ export default function PlannerPage() {
   const [parsing, setParsing] = useState(false);
   const [isMapVisible, setIsMapVisible] = useState(true);
   const [isClient, setIsClient] = useState(false);
+  const [lastActivityElementId, setLastActivityElementId] = useState<string | null>(null);
   const latestParseIdRef = useRef(0);
   const hasTriedLocateRef = useRef(false);
   const mapSectionRef = useRef<HTMLDivElement | null>(null);
@@ -232,6 +237,10 @@ export default function PlannerPage() {
     [setFocusedMarker]
   );
 
+  const handleActivitySelect = useCallback((elementId: string) => {
+    setLastActivityElementId(elementId);
+  }, []);
+
   const detectCurrentOrigin = useCallback(async () => {
     if (locating) {
       return;
@@ -297,6 +306,10 @@ export default function PlannerPage() {
   useEffect(() => {
     setIsClient(true);
   }, []);
+
+  useEffect(() => {
+    setLastActivityElementId(null);
+  }, [result]);
 
   useEffect(() => {
     const element = mapSectionRef.current;
@@ -428,7 +441,45 @@ export default function PlannerPage() {
     }
   }, [setIsMapVisible]);
 
+  const handleScrollToLastActivity = useCallback(() => {
+    if (!lastActivityElementId) {
+      return;
+    }
+
+    if (typeof document === "undefined") {
+      return;
+    }
+
+    const target = document.getElementById(lastActivityElementId);
+
+    if (!target) {
+      setLastActivityElementId(null);
+      return;
+    }
+
+    target.scrollIntoView({ behavior: "smooth", block: "center" });
+
+    if (typeof window !== "undefined" && typeof (target as HTMLElement).focus === "function") {
+      window.requestAnimationFrame(() => {
+        (target as HTMLElement).focus({ preventScroll: true });
+      });
+    }
+  }, [lastActivityElementId]);
+
+  const handleReturnToPrevious = useCallback(() => {
+    goBackToPreviousMarker();
+    setIsMapVisible(true);
+
+    if (typeof window !== "undefined") {
+      window.requestAnimationFrame(() => {
+        mapSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+        mapSectionRef.current?.focus?.({ preventScroll: true });
+      });
+    }
+  }, [goBackToPreviousMarker, setIsMapVisible]);
+
   const shouldShowFloatingMap = isClient && !isMapVisible && markers.length > 0;
+  const hasMarkerHistory = focusHistory.length > 0;
 
   const floatingMapOverlay = shouldShowFloatingMap ? (
     <FloatingMapOverlay
@@ -638,9 +689,28 @@ export default function PlannerPage() {
           tabIndex={-1}
           className="space-y-4 rounded-3xl border border-slate-800 bg-slate-900/80 p-4 shadow-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
         >
-          <header className="flex items-center justify-between">
+          <header className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-xl font-semibold text-white">互动地图</h2>
-            <span className="text-xs text-slate-400">拖动缩放以查看每日地点</span>
+            <div className="flex items-center gap-2 text-xs text-slate-400">
+              <span>拖动缩放以查看每日地点</span>
+              <button
+                type="button"
+                onClick={handleScrollToLastActivity}
+                className="rounded border border-slate-700 bg-slate-900 px-2 py-1 text-[11px] text-slate-200 transition hover:border-blue-500 hover:text-blue-300 disabled:cursor-not-allowed disabled:border-slate-800 disabled:text-slate-500"
+                disabled={!lastActivityElementId}
+              >
+                返回活动详情
+              </button>
+              {hasMarkerHistory && (
+                <button
+                  type="button"
+                  onClick={handleReturnToPrevious}
+                  className="rounded border border-slate-700 bg-slate-900 px-2 py-1 text-[11px] text-slate-200 transition hover:border-blue-500 hover:text-blue-300"
+                >
+                  返回上一个地点
+                </button>
+              )}
+            </div>
           </header>
           <div className="relative h-80">
             <MapView markers={markers} focusedMarker={focusedMarker ?? undefined} />
@@ -659,7 +729,11 @@ export default function PlannerPage() {
               <h2 className="text-xl font-semibold text-white">日程时间线</h2>
               <span className="text-xs text-slate-400">按天查看详细安排</span>
             </header>
-            <ItineraryTimeline itinerary={result} onActivityFocus={handleActivityFocus} />
+            <ItineraryTimeline
+              itinerary={result}
+              onActivityFocus={handleActivityFocus}
+              onActivitySelect={handleActivitySelect}
+            />
           </div>
 
           <DestinationGallery />
