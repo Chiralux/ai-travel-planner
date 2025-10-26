@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useSupabaseAuth } from "../../src/lib/supabase/AuthProvider";
 
 const MIME_TYPES = ["audio/webm", "audio/ogg", "audio/wav"];
 const DEFAULT_MIME_TYPE = MIME_TYPES[0];
@@ -17,6 +18,7 @@ export function VoiceRecorder({ onText, onBeforeStart }: VoiceRecorderProps) {
   const chunksRef = useRef<Blob[]>([]);
   const [status, setStatus] = useState<RecorderState>("idle");
   const [message, setMessage] = useState<string | null>(null);
+  const { accessToken } = useSupabaseAuth();
 
   const resetRecorder = useCallback(() => {
     chunksRef.current = [];
@@ -67,9 +69,16 @@ export function VoiceRecorder({ onText, onBeforeStart }: VoiceRecorderProps) {
           const formData = new FormData();
           formData.append("audio", blob, `recording.${blob.type.split("/")[1] ?? "webm"}`);
 
+          const headers: Record<string, string> = {};
+
+          if (accessToken) {
+            headers.Authorization = `Bearer ${accessToken}`;
+          }
+
           const response = await fetch("/api/asr", {
             method: "POST",
-            body: formData
+            body: formData,
+            headers: Object.keys(headers).length ? headers : undefined
           });
 
           const payload = await response.json();
@@ -108,7 +117,7 @@ export function VoiceRecorder({ onText, onBeforeStart }: VoiceRecorderProps) {
       setMessage(fallback);
       setStatus("error");
     }
-  }, [onText]);
+  }, [onText, accessToken]);
 
   const stopRecording = useCallback(() => {
     const recorder = mediaRecorderRef.current;

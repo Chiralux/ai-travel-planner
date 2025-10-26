@@ -3,12 +3,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { ComponentProps, FormEvent } from "react";
+import { useRouter } from "next/navigation";
 import { VoiceRecorder } from "../../../ui/components/VoiceRecorder";
 import { MapView } from "../../../ui/components/MapView";
 import { ItineraryTimeline } from "../../../ui/components/ItineraryTimeline";
 import { usePlannerStore, mapMarkersSelector } from "../../../lib/store/usePlannerStore";
 import { DestinationGallery } from "../../../ui/components/DestinationGallery";
 import { mergeParsedInput, parseTravelInput as localParseTravelInput } from "../../core/utils/travelInputParser";
+import { useSupabaseAuth } from "../../lib/supabase/AuthProvider";
 
 const preferenceOptions = ["美食", "文化", "户外", "亲子", "夜生活", "艺术"];
 
@@ -66,6 +68,39 @@ function FloatingMapOverlay({ markers, focusedMarker, onScrollToMap }: FloatingM
 }
 
 export default function PlannerPage() {
+  const router = useRouter();
+  const { session, accessToken, loading: authLoading } = useSupabaseAuth();
+
+  useEffect(() => {
+    if (!authLoading && !session) {
+      router.replace("/auth");
+    }
+  }, [authLoading, session, router]);
+
+  if (authLoading) {
+    return (
+      <p className="rounded-xl border border-slate-800 bg-slate-900/80 p-6 text-center text-slate-300">
+        正在验证登录状态...
+      </p>
+    );
+  }
+
+  if (!session) {
+    return (
+      <p className="rounded-xl border border-slate-800 bg-slate-900/80 p-6 text-center text-slate-300">
+        需要登录后才能使用行程规划功能，正在跳转...
+      </p>
+    );
+  }
+
+  return <PlannerContent accessToken={accessToken} />;
+}
+
+type PlannerContentProps = {
+  accessToken: string | null;
+};
+
+function PlannerContent({ accessToken }: PlannerContentProps) {
   const {
     form,
     loading,
@@ -141,11 +176,17 @@ export default function PlannerPage() {
       };
 
       try {
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json"
+        };
+
+        if (accessToken) {
+          headers.Authorization = `Bearer ${accessToken}`;
+        }
+
         const response = await fetch("/api/travel-input", {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
+          headers,
           body: JSON.stringify(requestBody)
         });
 
@@ -227,7 +268,7 @@ export default function PlannerPage() {
         finalize(feedback);
       }
     },
-    [form, knownPreferences, mergeParsedInput, setField]
+    [form, knownPreferences, mergeParsedInput, setField, accessToken]
   );
 
   const handleActivityFocus = useCallback(
@@ -264,7 +305,15 @@ export default function PlannerPage() {
 
           try {
             const params = new URLSearchParams({ lat: String(latitude), lng: String(longitude) });
-            const response = await fetch(`/api/geocode/reverse?${params.toString()}`);
+            const headers: Record<string, string> = {};
+
+            if (accessToken) {
+              headers.Authorization = `Bearer ${accessToken}`;
+            }
+
+            const response = await fetch(`/api/geocode/reverse?${params.toString()}`, {
+              headers: Object.keys(headers).length > 0 ? headers : undefined
+            });
             const json = await response.json();
 
             if (response.ok && json.ok) {
@@ -311,7 +360,7 @@ export default function PlannerPage() {
         { enableHighAccuracy: false, timeout: 1000 * 15, maximumAge: 1000 * 60 * 5 }
       );
     },
-    [form.origin, locating, setField, setLocationStatus]
+    [form.origin, locating, setField, setLocationStatus, accessToken]
   );
 
   const clearPrimaryFormFields = useCallback(() => {
@@ -415,11 +464,17 @@ export default function PlannerPage() {
     };
 
     try {
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json"
+      };
+
+      if (accessToken) {
+        headers.Authorization = `Bearer ${accessToken}`;
+      }
+
       const response = await fetch("/api/itineraries", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
+        headers,
         body: JSON.stringify(payload)
       });
 

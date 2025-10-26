@@ -22,6 +22,20 @@ export default function HomePage() {
         <p>
           - tRPC、Redis、Logtail 的配置由你在后续步骤中扩展。
         </p>
+        <div className="flex flex-wrap gap-3 pt-2">
+          <Link
+            href="/auth"
+            className="rounded-md border border-blue-500 px-4 py-2 text-sm text-blue-300 transition hover:bg-blue-500/10"
+          >
+            登录 / 注册
+          </Link>
+          <Link
+            href="/planner"
+            className="rounded-md border border-slate-700 px-4 py-2 text-sm text-slate-200 transition hover:border-blue-500 hover:text-blue-300"
+          >
+            进入 Planner
+          </Link>
+        </div>
       </div>
 
       <footer className="pt-2 text-sm text-slate-400">
