@@ -7,11 +7,12 @@ const DEFAULT_MIME_TYPE = MIME_TYPES[0];
 
 type VoiceRecorderProps = {
   onText?: (text: string) => void;
+  onBeforeStart?: () => void;
 };
 
 type RecorderState = "idle" | "recording" | "uploading" | "error";
 
-export function VoiceRecorder({ onText }: VoiceRecorderProps) {
+export function VoiceRecorder({ onText, onBeforeStart }: VoiceRecorderProps) {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const [status, setStatus] = useState<RecorderState>("idle");
@@ -124,9 +125,10 @@ export function VoiceRecorder({ onText }: VoiceRecorderProps) {
     if (status === "recording") {
       stopRecording();
     } else if (status === "idle" || status === "error") {
+      onBeforeStart?.();
       startRecording();
     }
-  }, [startRecording, stopRecording, status]);
+  }, [startRecording, stopRecording, status, onBeforeStart]);
 
   const disabled = status === "uploading";
 

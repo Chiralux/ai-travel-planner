@@ -107,7 +107,9 @@ export const usePlannerStore = create<PlannerState>((set) => ({
         : false;
 
       if (isSameMarker) {
-        return {};
+        return {
+          focusedMarker: { ...marker }
+        };
       }
 
       const nextHistory = current

@@ -241,67 +241,112 @@ export default function PlannerPage() {
     setLastActivityElementId(elementId);
   }, []);
 
-  const detectCurrentOrigin = useCallback(async () => {
-    if (locating) {
-      return;
-    }
-    if (typeof navigator === "undefined" || !navigator.geolocation) {
-      setLocationStatus("当前浏览器不支持定位，您可以手动填写出发地。");
-      return;
-    }
+  const detectCurrentOrigin = useCallback(
+    (options?: { updateEmptyOrigin?: boolean }) => {
+      if (locating) {
+        return;
+      }
 
-    setLocating(true);
-    setLocationStatus("正在定位当前出发地...");
+      if (typeof navigator === "undefined" || !navigator.geolocation) {
+        setLocationStatus("当前浏览器不支持定位，您可以手动填写出发地。");
+        return;
+      }
 
-    navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        const { latitude, longitude } = position.coords;
+      setLocating(true);
+      setLocationStatus("正在定位当前出发地...");
 
-        setField("originCoords", { lat: latitude, lng: longitude });
+      navigator.geolocation.getCurrentPosition(
+        async (position) => {
+          const { latitude, longitude } = position.coords;
+          const shouldUpdateOrigin = options?.updateEmptyOrigin || !form.origin?.trim();
 
-        try {
-          const params = new URLSearchParams({ lat: String(latitude), lng: String(longitude) });
-          const response = await fetch(`/api/geocode/reverse?${params.toString()}`);
-          const json = await response.json();
+          setField("originCoords", { lat: latitude, lng: longitude });
 
-          if (response.ok && json.ok) {
-            const label = json.data?.label ?? "当前位置";
-            setField("origin", label);
-            setLocationStatus(`已定位：${label}`);
-          } else {
+          try {
+            const params = new URLSearchParams({ lat: String(latitude), lng: String(longitude) });
+            const response = await fetch(`/api/geocode/reverse?${params.toString()}`);
+            const json = await response.json();
+
+            if (response.ok && json.ok) {
+              const label = json.data?.label ?? "当前位置";
+              if (shouldUpdateOrigin) {
+                setField("origin", label);
+              }
+              setLocationStatus(`已定位：${label}`);
+            } else {
+              const fallbackLabel = `当前位置 (${latitude.toFixed(4)}, ${longitude.toFixed(4)})`;
+              if (shouldUpdateOrigin) {
+                setField("origin", fallbackLabel);
+              }
+              setLocationStatus("定位成功，但无法识别城市名称，可手动调整。");
+            }
+          } catch (error) {
+            console.error("Failed to reverse geocode", error);
             const fallbackLabel = `当前位置 (${latitude.toFixed(4)}, ${longitude.toFixed(4)})`;
-            setField("origin", fallbackLabel);
-            setLocationStatus("定位成功，但无法识别城市名称，可手动调整。");
+            if (shouldUpdateOrigin) {
+              setField("origin", fallbackLabel);
+            }
+            setLocationStatus("定位成功，但地理名称获取失败，可手动调整。");
+          } finally {
+            setLocating(false);
           }
-        } catch (error) {
-          console.error("Failed to reverse geocode", error);
-          const fallbackLabel = `当前位置 (${latitude.toFixed(4)}, ${longitude.toFixed(4)})`;
-          setField("origin", fallbackLabel);
-          setLocationStatus("定位成功，但地理名称获取失败，可手动调整。");
-        } finally {
+        },
+        (error) => {
+          console.warn("Geolocation failed", error);
           setLocating(false);
-        }
-      },
-      (error) => {
-        console.warn("Geolocation failed", error);
-        setLocating(false);
-        switch (error.code) {
-          case error.PERMISSION_DENIED:
-            setLocationStatus("未获得定位权限，请手动填写出发地。");
-            break;
-          case error.POSITION_UNAVAILABLE:
-            setLocationStatus("无法获取位置信息，请检查定位服务。");
-            break;
-          case error.TIMEOUT:
-            setLocationStatus("定位超时，请重试或手动填写。");
-            break;
-          default:
-            setLocationStatus("定位失败，请重试或手动填写出发地。");
-        }
-      },
-      { enableHighAccuracy: false, timeout: 1000 * 15, maximumAge: 1000 * 60 * 5 }
-    );
-  }, [locating, setField]);
+          switch (error.code) {
+            case error.PERMISSION_DENIED:
+              setLocationStatus("未获得定位权限，请手动填写出发地。");
+              break;
+            case error.POSITION_UNAVAILABLE:
+              setLocationStatus("无法获取位置信息，请检查定位服务。");
+              break;
+            case error.TIMEOUT:
+              setLocationStatus("定位超时，请重试或手动填写。");
+              break;
+            default:
+              setLocationStatus("定位失败，请重试或手动填写出发地。");
+          }
+        },
+        { enableHighAccuracy: false, timeout: 1000 * 15, maximumAge: 1000 * 60 * 5 }
+      );
+    },
+    [form.origin, locating, setField, setLocationStatus]
+  );
+
+  const clearPrimaryFormFields = useCallback(() => {
+    setField("origin", "");
+    setField("destination", "");
+    setField("days", 1);
+    setField("budget", undefined);
+    setField("partySize", undefined);
+    setField("originCoords", undefined);
+    setLocationStatus(null);
+    detectCurrentOrigin({ updateEmptyOrigin: true });
+  }, [detectCurrentOrigin, setField, setLocationStatus]);
+
+  const handleVoiceText = (text: string) => {
+    const trimmed = text.trim();
+
+    if (!trimmed) {
+      return;
+    }
+
+    clearPrimaryFormFields();
+    void applyParsedInput(trimmed, "voice");
+  };
+
+  const handleSmartInputParse = () => {
+    clearPrimaryFormFields();
+    const trimmed = smartInput.trim();
+
+    if (!trimmed) {
+      setSmartInputMessage("请输入自然语言描述，例如：我想去日本，5 天，预算 1 万元，喜欢美食和动漫，带孩子。");
+      return;
+    }
+
+    void applyParsedInput(trimmed, "text");
+  };
 
   useEffect(() => {
     setIsClient(true);
@@ -399,27 +444,6 @@ export default function PlannerPage() {
 
   const handlePreferenceToggle = (value: string) => {
     togglePreference(value);
-  };
-
-  const handleVoiceText = (text: string) => {
-    const trimmed = text.trim();
-
-    if (!trimmed) {
-      return;
-    }
-
-    void applyParsedInput(trimmed, "voice");
-  };
-
-  const handleSmartInputParse = () => {
-    const trimmed = smartInput.trim();
-
-    if (!trimmed) {
-      setSmartInputMessage("请输入自然语言描述，例如：我想去日本，5 天，预算 1 万元，喜欢美食和动漫，带孩子。");
-      return;
-    }
-
-    void applyParsedInput(trimmed, "text");
   };
 
   const handleScrollToMap = useCallback(() => {
@@ -528,7 +552,7 @@ export default function PlannerPage() {
                 >
                   {parsing ? "解析中..." : "解析文字描述"}
                 </button>
-                <VoiceRecorder onText={handleVoiceText} />
+                <VoiceRecorder onText={handleVoiceText} onBeforeStart={clearPrimaryFormFields} />
               </div>
               {smartInputMessage && (
                 <p className="whitespace-pre-line text-xs text-slate-400">{smartInputMessage}</p>
@@ -549,6 +573,11 @@ export default function PlannerPage() {
                   const value = event.target.value;
                   setField("origin", value);
                   setLocationStatus(value.trim().length > 0 ? `出发地：${value.trim()}` : "您可以定位或填写出发地");
+                }}
+                onBlur={(event) => {
+                  if (!event.target.value.trim()) {
+                    detectCurrentOrigin({ updateEmptyOrigin: true });
+                  }
                 }}
                 className="flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 focus:border-blue-500 focus:outline-none"
                 placeholder="定位或手动填写出发地"
