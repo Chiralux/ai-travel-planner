@@ -161,6 +161,7 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
   const [plans, setPlans] = useState<PlanSummary[]>([]);
   const [loadingPlans, setLoadingPlans] = useState(false);
   const [plansError, setPlansError] = useState<string | null>(null);
+  const [activePlanId, setActivePlanId] = useState<string | null>(null);
   const latestParseIdRef = useRef(0);
   const hasTriedLocateRef = useRef(false);
   const mapSectionRef = useRef<HTMLDivElement | null>(null);
@@ -573,30 +574,34 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
     }
 
     const title = planTitle.trim() || `${form.destination || "未命名目的地"} 行程`;
+    const payload = {
+      title,
+      summary: planSummary.trim() || undefined,
+      form: {
+        destination: form.destination,
+        days: form.days,
+        budget: form.budget,
+        partySize: form.partySize,
+        preferences: form.preferences,
+        origin: form.origin,
+        originCoords: form.originCoords ?? undefined
+      },
+      itinerary: result
+    };
+
+    const endpoint = activePlanId ? `/api/plans/${activePlanId}` : "/api/plans";
+    const method = activePlanId ? "PUT" : "POST";
 
     setSavingPlan(true);
 
     try {
-      const response = await fetch("/api/plans", {
-        method: "POST",
+      const response = await fetch(endpoint, {
+        method,
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${accessToken}`
         },
-        body: JSON.stringify({
-          title,
-          summary: planSummary.trim() || undefined,
-          form: {
-            destination: form.destination,
-            days: form.days,
-            budget: form.budget,
-            partySize: form.partySize,
-            preferences: form.preferences,
-            origin: form.origin,
-            originCoords: form.originCoords ?? undefined
-          },
-          itinerary: result
-        })
+        body: JSON.stringify(payload)
       });
 
       const json = await response.json();
@@ -605,9 +610,11 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
         throw new Error(json?.error ?? "保存行程失败，请稍后再试。");
       }
 
-      setPlanTitle("");
-      setPlanSummary("");
-      window.alert("行程已保存到云端。");
+      const data = json.data as PlanSummary;
+      setActivePlanId(data.id);
+      setPlanTitle(data.title ?? title);
+      setPlanSummary(data.summary ?? "");
+      window.alert(activePlanId ? "行程已更新。" : "行程已保存到云端。");
       setShowPlans(true);
       void fetchPlans();
     } catch (error) {
@@ -616,7 +623,7 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
     } finally {
       setSavingPlan(false);
     }
-  }, [accessToken, result, planTitle, planSummary, form, fetchPlans]);
+  }, [accessToken, result, planTitle, planSummary, form, fetchPlans, activePlanId]);
 
   const handleLoadPlan = useCallback(
     async (planId: string) => {
@@ -641,13 +648,17 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
         }
 
         const data = json.data as {
+          id: string;
           form: PlannerForm;
           itinerary: NonNullable<typeof result>;
           title?: string;
+          summary?: string | null;
         };
 
         hydrateFromPlan({ form: data.form, itinerary: data.itinerary });
+        setActivePlanId(data.id);
         setPlanTitle(data.title ?? "");
+        setPlanSummary(data.summary ?? "");
         window.alert("已加载云端行程。");
         setShowPlans(false);
       } catch (error) {
@@ -658,6 +669,51 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
       }
     },
     [accessToken, hydrateFromPlan, form, result]
+  );
+
+  const handleDeletePlan = useCallback(
+    async (planId: string) => {
+      if (!accessToken) {
+        window.alert("请先登录后再删除行程。");
+        return;
+      }
+
+      if (typeof window !== "undefined" && !window.confirm("确定要删除这个云端行程吗？删除后无法恢复。")) {
+        return;
+      }
+
+      try {
+        setPlansError(null);
+        const response = await fetch(`/api/plans/${planId}`, {
+          method: "DELETE",
+          headers: {
+            Authorization: `Bearer ${accessToken}`
+          }
+        });
+
+        const json = await response.json();
+
+        if (!response.ok || !json.ok) {
+          throw new Error(json?.error ?? "删除行程失败，请稍后再试。");
+        }
+
+        setPlans((current) => current.filter((plan) => plan.id !== planId));
+
+        if (planId === activePlanId) {
+          setActivePlanId(null);
+          setPlanTitle("");
+          setPlanSummary("");
+        }
+
+        window.alert("云端行程已删除。");
+        void fetchPlans();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "删除行程失败，请稍后再试。";
+        window.alert(message);
+        setPlansError(message);
+      }
+    },
+    [accessToken, activePlanId, fetchPlans]
   );
 
   const handleScrollToMap = useCallback(() => {
@@ -897,6 +953,18 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
           <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-4 text-sm text-slate-300">
             <h3 className="mb-2 text-base font-semibold text-white">云端行程</h3>
             <div className="flex flex-col gap-2">
+              {activePlanId && (
+                <div className="flex items-center justify-between rounded-lg border border-blue-500/40 bg-blue-500/10 px-3 py-2 text-xs text-blue-200">
+                  <span>当前编辑云端行程</span>
+                  <button
+                    type="button"
+                    className="rounded border border-blue-400 px-2 py-1 text-[11px] text-blue-100 transition hover:bg-blue-500/20"
+                    onClick={() => setActivePlanId(null)}
+                  >
+                    另存为新行程
+                  </button>
+                </div>
+              )}
               <label className="flex flex-col gap-1">
                 <span className="text-xs text-slate-400">行程标题</span>
                 <input
@@ -923,7 +991,13 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
                   disabled={savingPlan}
                   className="rounded-lg border border-emerald-500 bg-emerald-500/10 px-4 py-2 text-emerald-300 transition hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {savingPlan ? "保存中..." : "保存到云端"}
+                  {savingPlan
+                    ? activePlanId
+                      ? "更新中..."
+                      : "保存中..."
+                    : activePlanId
+                      ? "更新云端行程"
+                      : "保存到云端"}
                 </button>
                 <button
                   type="button"
@@ -943,9 +1017,19 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
                     <p className="text-xs text-slate-400">尚未保存行程。</p>
                   ) : (
                     <ul className="flex flex-col gap-2 text-xs">
-                      {plans.map((plan) => (
-                        <li key={plan.id} className="rounded border border-slate-800 bg-slate-900/80 p-2">
-                          <div className="flex items-center justify-between gap-3">
+                      {plans.map((plan) => {
+                        const isActivePlan = activePlanId === plan.id;
+
+                        return (
+                          <li
+                            key={plan.id}
+                            className={`rounded border p-2 transition ${
+                              isActivePlan
+                                ? "border-blue-500/60 bg-blue-500/10"
+                                : "border-slate-800 bg-slate-900/80 hover:border-blue-500/40"
+                            }`}
+                          >
+                            <div className="flex items-center justify-between gap-3">
                             <div className="min-w-0">
                               <p className="truncate text-sm font-medium text-white" title={plan.title}>
                                 {plan.title}
@@ -967,10 +1051,18 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
                               >
                                 加载
                               </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeletePlan(plan.id)}
+                                className="rounded border border-red-500 px-2 py-1 text-[11px] text-red-300 transition hover:bg-red-500/10"
+                              >
+                                删除
+                              </button>
                             </div>
                           </div>
                         </li>
-                      ))}
+                        );
+                      })}
                     </ul>
                   )}
                 </div>
