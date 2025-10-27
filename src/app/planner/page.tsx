@@ -8,7 +8,6 @@ import { VoiceRecorder } from "../../../ui/components/VoiceRecorder";
 import { MapView } from "../../../ui/components/MapView";
 import { ItineraryTimeline } from "../../../ui/components/ItineraryTimeline";
 import { usePlannerStore, mapMarkersSelector, type PlannerForm } from "../../../lib/store/usePlannerStore";
-import { DestinationGallery } from "../../../ui/components/DestinationGallery";
 import { mergeParsedInput, parseTravelInput as localParseTravelInput } from "../../core/utils/travelInputParser";
 import { useSupabaseAuth } from "../../lib/supabase/AuthProvider";
 
@@ -1155,8 +1154,6 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
               onActivityUpdate={updateActivity}
             />
           </div>
-
-          <DestinationGallery />
         </div>
       </section>
       {floatingMapOverlay}
