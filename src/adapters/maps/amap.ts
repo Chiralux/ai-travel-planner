@@ -10,6 +10,7 @@ const LOCATION_SUFFIX_PATTERN = /(特别行政区|自治区|自治州|地区|盟
 const MATCH_CONFIDENCE_THRESHOLD = 0.75;
 const MAX_CANDIDATE_RESULTS = 5;
 const CANDIDATE_CONFIDENCE_GAP = 0.12;
+const HIGH_CONFIDENCE_OVERRIDE = 0.9;
 const CITY_APPROXIMATE_COORDS: Record<string, { lat: number; lng: number }> = {
   北京: { lat: 39.9042, lng: 116.4074 },
   上海: { lat: 31.2304, lng: 121.4737 },
@@ -870,8 +871,12 @@ export class AMapClient implements MapsClient {
         if (topCandidates.length > 0) {
           const best = topCandidates[0];
           const second = topCandidates[1];
+          const acceptBestCandidate =
+            !second ||
+            best.confidence - second.confidence >= CANDIDATE_CONFIDENCE_GAP ||
+            best.confidence >= HIGH_CONFIDENCE_OVERRIDE;
 
-          if (!second || best.confidence - second.confidence >= CANDIDATE_CONFIDENCE_GAP) {
+          if (acceptBestCandidate) {
             const bestPoi = best.poi;
             const place: Place = {
               name: bestPoi.name ?? (activity.title ?? best.term),
