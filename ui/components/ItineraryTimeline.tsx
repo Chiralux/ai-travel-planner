@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState, type KeyboardEvent, type MouseEvent } from "react";
-import type { Itinerary } from "../../src/core/validation/itinerarySchema";
+import { useEffect, useState, type ChangeEvent, type KeyboardEvent, type MouseEvent } from "react";
+import type { Activity, Itinerary } from "../../src/core/validation/itinerarySchema";
 
 type FocusableMarker = {
   lat: number;
@@ -14,6 +14,16 @@ type ItineraryTimelineProps = {
   itinerary?: Itinerary | null;
   onActivityFocus?: (marker: FocusableMarker) => void;
   onActivitySelect?: (activityElementId: string) => void;
+  onActivityUpdate?: (dayIndex: number, activityIndex: number, updates: Partial<Activity>) => void;
+};
+
+type ActivityEditorState = {
+  key: string;
+  dayIndex: number;
+  activityIndex: number;
+  title: string;
+  timeSlot: string;
+  note: string;
 };
 
 function formatConfidenceLabel(confidence?: number): string | null {
@@ -27,11 +37,14 @@ function formatConfidenceLabel(confidence?: number): string | null {
   return `置信度 ${clamped}%`;
 }
 
-export function ItineraryTimeline({ itinerary, onActivityFocus, onActivitySelect }: ItineraryTimelineProps) {
+export function ItineraryTimeline({ itinerary, onActivityFocus, onActivitySelect, onActivityUpdate }: ItineraryTimelineProps) {
   const [expandedActivities, setExpandedActivities] = useState<Set<string>>(() => new Set());
+  const [editorState, setEditorState] = useState<ActivityEditorState | null>(null);
+  const canEdit = typeof onActivityUpdate === "function";
 
   useEffect(() => {
     setExpandedActivities(new Set());
+    setEditorState(null);
   }, [itinerary]);
 
   const toggleExpanded = (key: string) => {
@@ -73,7 +86,8 @@ export function ItineraryTimeline({ itinerary, onActivityFocus, onActivitySelect
               {day.activities.map((activity, index) => {
                 const activityKey = `${day.day}-${index}`;
                 const elementId = `timeline-activity-${dayIndex}-${index}`;
-                const isExpanded = expandedActivities.has(activityKey);
+                const isEditing = editorState?.key === activityKey;
+                const isExpanded = isEditing || expandedActivities.has(activityKey);
                 const confidenceLabel = formatConfidenceLabel(activity.maps_confidence);
                 const addressLine = activity.address
                   ? `${activity.address}${confidenceLabel ? `（${confidenceLabel}）` : ""}`
@@ -90,6 +104,10 @@ export function ItineraryTimeline({ itinerary, onActivityFocus, onActivitySelect
                   : null;
 
                 const handleClick = () => {
+                  if (isEditing) {
+                    return;
+                  }
+
                   if (focusPayload) {
                     onActivityFocus?.(focusPayload);
                   }
@@ -113,16 +131,85 @@ export function ItineraryTimeline({ itinerary, onActivityFocus, onActivitySelect
                   toggleExpanded(activityKey);
                 };
 
+                const handleEditClick = (event: MouseEvent<HTMLButtonElement>) => {
+                  event.stopPropagation();
+
+                  if (!canEdit) {
+                    return;
+                  }
+
+                  setEditorState({
+                    key: activityKey,
+                    dayIndex,
+                    activityIndex: index,
+                    title: activity.title,
+                    timeSlot: activity.time_slot ?? "",
+                    note: activity.note ?? ""
+                  });
+                  setExpandedActivities((current) => {
+                    const next = new Set(current);
+                    next.add(activityKey);
+                    return next;
+                  });
+                };
+
+                const handleEditorChange = (
+                  field: "title" | "timeSlot" | "note",
+                  event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
+                ) => {
+                  setEditorState((current) => {
+                    if (!current || current.key !== activityKey) {
+                      return current;
+                    }
+
+                    return {
+                      ...current,
+                      [field]: event.target.value
+                    };
+                  });
+                };
+
+                const handleCancelEdit = (event: MouseEvent<HTMLButtonElement>) => {
+                  event.stopPropagation();
+                  setEditorState(null);
+                };
+
+                const handleSaveEdit = (event: MouseEvent<HTMLButtonElement>) => {
+                  event.stopPropagation();
+
+                  if (!canEdit || !editorState || editorState.key !== activityKey) {
+                    return;
+                  }
+
+                  const trimmedTitle = editorState.title.trim();
+
+                  if (!trimmedTitle) {
+                    if (typeof window !== "undefined") {
+                      window.alert("活动标题不能为空。请填写一个标题后再保存。");
+                    }
+                    return;
+                  }
+
+                  const updates: Partial<Activity> = {
+                    title: trimmedTitle,
+                    time_slot: editorState.timeSlot.trim() || undefined,
+                    note: editorState.note.trim() || undefined
+                  };
+
+                  onActivityUpdate?.(editorState.dayIndex, editorState.activityIndex, updates);
+                  setEditorState(null);
+                };
+
                 return (
                   <li
                     key={`${day.day}-${activity.title}-${index}`}
                     id={elementId}
                     className={`flex flex-col gap-1 rounded-lg border border-slate-800/80 bg-slate-950/60 p-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60 ${focusPayload ? "cursor-pointer transition hover:border-blue-500/60" : ""}`}
-                    onClick={handleClick}
-                    onKeyDown={handleKeyDown}
-                    role={focusPayload ? "button" : undefined}
-                    tabIndex={focusPayload ? 0 : undefined}
-                    aria-label={focusPayload ? `定位到 ${activity.title}` : undefined}
+                    onClick={!isEditing ? handleClick : undefined}
+                    onKeyDown={!isEditing ? handleKeyDown : undefined}
+                    role={!isEditing && focusPayload ? "button" : undefined}
+                    tabIndex={!isEditing && focusPayload ? 0 : undefined}
+                    aria-label={!isEditing && focusPayload ? `定位到 ${activity.title}` : undefined}
                   >
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex flex-col gap-1">
@@ -137,14 +224,44 @@ export function ItineraryTimeline({ itinerary, onActivityFocus, onActivitySelect
                             ¥{activity.cost_estimate.toFixed(0)}
                           </span>
                         )}
-                        <button
-                          type="button"
-                          className="rounded border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-200 transition hover:border-blue-500 hover:text-blue-300"
-                          onClick={handleToggleExpanded}
-                          aria-expanded={isExpanded}
-                        >
-                          {isExpanded ? "收起详情" : "查看详情"}
-                        </button>
+                        {canEdit && isEditing ? (
+                          <>
+                            <button
+                              type="button"
+                              className="rounded border border-emerald-500 bg-emerald-500/10 px-2 py-1 text-xs text-emerald-200 transition hover:bg-emerald-500/20"
+                              onClick={handleSaveEdit}
+                            >
+                              保存
+                            </button>
+                            <button
+                              type="button"
+                              className="rounded border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-300 transition hover:border-red-500 hover:text-red-300"
+                              onClick={handleCancelEdit}
+                            >
+                              取消
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              className="rounded border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-200 transition hover:border-blue-500 hover:text-blue-300"
+                              onClick={handleToggleExpanded}
+                              aria-expanded={isExpanded}
+                            >
+                              {isExpanded ? "收起详情" : "查看详情"}
+                            </button>
+                            {canEdit && (
+                              <button
+                                type="button"
+                                className="rounded border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-200 transition hover:border-blue-500 hover:text-blue-300"
+                                onClick={handleEditClick}
+                              >
+                                编辑
+                              </button>
+                            )}
+                          </>
+                        )}
                       </div>
                     </div>
                     <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
@@ -155,27 +272,60 @@ export function ItineraryTimeline({ itinerary, onActivityFocus, onActivitySelect
                     </div>
                     {isExpanded && (
                       <div className="mt-3 space-y-2 text-sm text-slate-400">
-                        {photos.length > 0 && (
-                          <div className="flex gap-2">
-                            {photos.map((photo, photoIndex) => (
-                              <div
-                                key={`${day.day}-${activity.title}-photo-${photoIndex}`}
-                                className="h-20 w-32 overflow-hidden rounded-md border border-slate-800/60 bg-slate-900/80"
-                              >
-                                <img
-                                  src={photo}
-                                  alt={`${activity.title} 参考图`}
-                                  className="h-full w-full object-cover"
-                                  loading="lazy"
-                                />
-                              </div>
-                            ))}
+                        {isEditing ? (
+                          <div className="space-y-3" onClick={(event) => event.stopPropagation()}>
+                            <label className="flex flex-col gap-1 text-xs uppercase tracking-wide text-slate-400">
+                              活动标题
+                              <input
+                                type="text"
+                                value={editorState?.title ?? ""}
+                                onChange={(event) => handleEditorChange("title", event)}
+                                className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-blue-500 focus:outline-none"
+                              />
+                            </label>
+                            <label className="flex flex-col gap-1 text-xs uppercase tracking-wide text-slate-400">
+                              时间段（可选）
+                              <input
+                                type="text"
+                                value={editorState?.timeSlot ?? ""}
+                                onChange={(event) => handleEditorChange("timeSlot", event)}
+                                className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-blue-500 focus:outline-none"
+                              />
+                            </label>
+                            <label className="flex flex-col gap-1 text-xs uppercase tracking-wide text-slate-400">
+                              备注（可选）
+                              <textarea
+                                value={editorState?.note ?? ""}
+                                onChange={(event) => handleEditorChange("note", event)}
+                                className="min-h-[96px] resize-y rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-blue-500 focus:outline-none"
+                              />
+                            </label>
                           </div>
-                        )}
-                        {activity.note && <p>{activity.note}</p>}
-                        {addressLine && <p>{addressLine}</p>}
-                        {!activity.note && !addressLine && photos.length === 0 && (
-                          <p className="text-slate-500">暂无更多信息</p>
+                        ) : (
+                          <>
+                            {photos.length > 0 && (
+                              <div className="flex gap-2">
+                                {photos.map((photo, photoIndex) => (
+                                  <div
+                                    key={`${day.day}-${activity.title}-photo-${photoIndex}`}
+                                    className="h-20 w-32 overflow-hidden rounded-md border border-slate-800/60 bg-slate-900/80"
+                                  >
+                                    <img
+                                      src={photo}
+                                      alt={`${activity.title} 参考图`}
+                                      className="h-full w-full object-cover"
+                                      loading="lazy"
+                                    />
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                            {activity.note && <p>{activity.note}</p>}
+                            {addressLine && <p>{addressLine}</p>}
+                            {!activity.note && !addressLine && photos.length === 0 && (
+                              <p className="text-slate-500">暂无更多信息</p>
+                            )}
+                          </>
                         )}
                       </div>
                     )}

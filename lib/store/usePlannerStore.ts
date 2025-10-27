@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { Itinerary } from "../../src/core/validation/itinerarySchema";
+import type { Activity, Itinerary } from "../../src/core/validation/itinerarySchema";
 
 export type PlannerForm = {
   destination: string;
@@ -37,6 +37,7 @@ type PlannerState = {
   goBackToPreviousMarker: () => void;
   setForm: (form: PlannerForm) => void;
   hydrateFromPlan: (payload: { form: PlannerForm; itinerary: Itinerary }) => void;
+  updateActivity: (dayIndex: number, activityIndex: number, updates: Partial<Activity>) => void;
 };
 
 const defaultForm: PlannerForm = {
@@ -158,7 +159,50 @@ export const usePlannerStore = create<PlannerState>((set) => ({
       error: null,
       focusedMarker: null,
       focusHistory: []
-    }))
+    })),
+  updateActivity: (dayIndex, activityIndex, updates) =>
+    set((state) => {
+      if (!state.result) {
+        return state;
+      }
+
+      if (dayIndex < 0 || dayIndex >= state.result.daily_plan.length) {
+        return state;
+      }
+
+      const day = state.result.daily_plan[dayIndex];
+
+      if (activityIndex < 0 || activityIndex >= day.activities.length) {
+        return state;
+      }
+
+      const nextActivity: Activity = {
+        ...day.activities[activityIndex],
+        ...updates
+      };
+
+      const nextDailyPlan = state.result.daily_plan.map((currentDay, currentDayIndex) => {
+        if (currentDayIndex !== dayIndex) {
+          return currentDay;
+        }
+
+        const nextActivities = currentDay.activities.map((currentActivity, currentActivityIndex) =>
+          currentActivityIndex === activityIndex ? nextActivity : currentActivity
+        );
+
+        return {
+          ...currentDay,
+          activities: nextActivities
+        };
+      });
+
+      return {
+        result: {
+          ...state.result,
+          daily_plan: nextDailyPlan
+        }
+      };
+    })
 }));
 
 export const mapMarkersSelector = (state: PlannerState) => {

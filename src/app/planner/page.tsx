@@ -124,7 +124,8 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
     focusedMarker,
     goBackToPreviousMarker,
     focusHistory,
-    hydrateFromPlan
+    hydrateFromPlan,
+    updateActivity
   } = usePlannerStore((state) => ({
     form: state.form,
     loading: state.loading,
@@ -140,7 +141,8 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
     focusedMarker: state.focusedMarker,
     goBackToPreviousMarker: state.goBackToPreviousMarker,
     focusHistory: state.focusHistory,
-    hydrateFromPlan: state.hydrateFromPlan
+    hydrateFromPlan: state.hydrateFromPlan,
+    updateActivity: state.updateActivity
   }));
   const markers = usePlannerStore(mapMarkersSelector);
   const [voiceMessage, setVoiceMessage] = useState<string | null>(null);
@@ -1058,6 +1060,7 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
               itinerary={result}
               onActivityFocus={handleActivityFocus}
               onActivitySelect={handleActivitySelect}
+              onActivityUpdate={updateActivity}
             />
           </div>
 
