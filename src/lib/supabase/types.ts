@@ -87,6 +87,35 @@ export type Database = {
           updated_at?: string;
         };
       };
+      travel_plans: {
+        Row: {
+          id: string;
+          user_id: string;
+          title: string;
+          summary: string | null;
+          form_snapshot: Json;
+          itinerary_snapshot: Json;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          title: string;
+          summary?: string | null;
+          form_snapshot?: Json;
+          itinerary_snapshot?: Json;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          title?: string;
+          summary?: string | null;
+          form_snapshot?: Json;
+          itinerary_snapshot?: Json;
+          updated_at?: string;
+        };
+      };
       trip_days: {
         Row: {
           id: string;

@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import type { Itinerary } from "../../src/core/validation/itinerarySchema";
 
-type PlannerForm = {
+export type PlannerForm = {
   destination: string;
   days: number;
   budget?: number;
@@ -35,6 +35,8 @@ type PlannerState = {
   setResult: (itinerary: Itinerary | null) => void;
   setFocusedMarker: (marker: FocusableMarker | null) => void;
   goBackToPreviousMarker: () => void;
+  setForm: (form: PlannerForm) => void;
+  hydrateFromPlan: (payload: { form: PlannerForm; itinerary: Itinerary }) => void;
 };
 
 const defaultForm: PlannerForm = {
@@ -42,6 +44,16 @@ const defaultForm: PlannerForm = {
   days: 3,
   preferences: []
 };
+
+const normalizeForm = (incoming: PlannerForm): PlannerForm => ({
+  destination: incoming.destination ?? "",
+  days: Math.max(1, Number.isFinite(incoming.days) ? Math.trunc(incoming.days) : 1),
+  budget: typeof incoming.budget === "number" ? Math.max(0, incoming.budget) : undefined,
+  partySize: typeof incoming.partySize === "number" ? Math.max(1, incoming.partySize) : undefined,
+  preferences: Array.isArray(incoming.preferences) ? [...new Set(incoming.preferences)] : [],
+  origin: incoming.origin ?? undefined,
+  originCoords: incoming.originCoords ? { ...incoming.originCoords } : undefined
+});
 
 const formatAddressWithConfidence = (address?: string, confidence?: number): string | undefined => {
   if (!address) {
@@ -134,7 +146,19 @@ export const usePlannerStore = create<PlannerState>((set) => ({
         focusedMarker: previous,
         focusHistory: nextHistory
       };
-    })
+    }),
+  setForm: (form) =>
+    set(() => ({
+      form: normalizeForm({ ...defaultForm, ...form, preferences: form.preferences ?? [] })
+    })),
+  hydrateFromPlan: ({ form, itinerary }) =>
+    set(() => ({
+      form: normalizeForm({ ...defaultForm, ...form, preferences: form.preferences ?? [] }),
+      result: itinerary,
+      error: null,
+      focusedMarker: null,
+      focusHistory: []
+    }))
 }));
 
 export const mapMarkersSelector = (state: PlannerState) => {

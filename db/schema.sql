@@ -55,6 +55,25 @@ create trigger set_timestamp_trips
 before update on public.trips
 for each row execute function public.trigger_set_timestamp();
 
+-- Saved travel plans ----------------------------------------------------------
+create table if not exists public.travel_plans (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  title text not null,
+  summary text,
+  form_snapshot jsonb not null default '{}'::jsonb,
+  itinerary_snapshot jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now())
+);
+
+create index if not exists travel_plans_user_id_idx on public.travel_plans(user_id);
+create index if not exists travel_plans_updated_at_idx on public.travel_plans(updated_at desc);
+
+create trigger set_timestamp_travel_plans
+before update on public.travel_plans
+for each row execute function public.trigger_set_timestamp();
+
 -- Trip days -------------------------------------------------------------------
 create table if not exists public.trip_days (
   id uuid primary key default gen_random_uuid(),
@@ -158,6 +177,7 @@ alter table public.trip_days enable row level security;
 alter table public.places enable row level security;
 alter table public.activities enable row level security;
 alter table public.expenses enable row level security;
+alter table public.travel_plans enable row level security;
 
 -- Suggested RLS policies (apply via Supabase dashboard or SQL migrations):
 -- 1. Ensure records are only visible to their owner.

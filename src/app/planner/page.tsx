@@ -7,12 +7,20 @@ import { useRouter } from "next/navigation";
 import { VoiceRecorder } from "../../../ui/components/VoiceRecorder";
 import { MapView } from "../../../ui/components/MapView";
 import { ItineraryTimeline } from "../../../ui/components/ItineraryTimeline";
-import { usePlannerStore, mapMarkersSelector } from "../../../lib/store/usePlannerStore";
+import { usePlannerStore, mapMarkersSelector, type PlannerForm } from "../../../lib/store/usePlannerStore";
 import { DestinationGallery } from "../../../ui/components/DestinationGallery";
 import { mergeParsedInput, parseTravelInput as localParseTravelInput } from "../../core/utils/travelInputParser";
 import { useSupabaseAuth } from "../../lib/supabase/AuthProvider";
 
 const preferenceOptions = ["美食", "文化", "户外", "亲子", "夜生活", "艺术"];
+
+type PlanSummary = {
+  id: string;
+  title: string;
+  summary: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
 
 type FloatingMapOverlayProps = Pick<ComponentProps<typeof MapView>, "markers" | "focusedMarker"> & {
   onScrollToMap: () => void;
@@ -106,6 +114,7 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
     loading,
     error,
     result,
+    setForm,
     setField,
     togglePreference,
     setLoading,
@@ -114,12 +123,14 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
     setFocusedMarker,
     focusedMarker,
     goBackToPreviousMarker,
-    focusHistory
+    focusHistory,
+    hydrateFromPlan
   } = usePlannerStore((state) => ({
     form: state.form,
     loading: state.loading,
     error: state.error,
     result: state.result,
+    setForm: state.setForm,
     setField: state.setField,
     togglePreference: state.togglePreference,
     setLoading: state.setLoading,
@@ -128,7 +139,8 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
     setFocusedMarker: state.setFocusedMarker,
     focusedMarker: state.focusedMarker,
     goBackToPreviousMarker: state.goBackToPreviousMarker,
-    focusHistory: state.focusHistory
+    focusHistory: state.focusHistory,
+    hydrateFromPlan: state.hydrateFromPlan
   }));
   const markers = usePlannerStore(mapMarkersSelector);
   const [voiceMessage, setVoiceMessage] = useState<string | null>(null);
@@ -140,6 +152,13 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
   const [isMapVisible, setIsMapVisible] = useState(true);
   const [isClient, setIsClient] = useState(false);
   const [lastActivityElementId, setLastActivityElementId] = useState<string | null>(null);
+  const [savingPlan, setSavingPlan] = useState(false);
+  const [showPlans, setShowPlans] = useState(false);
+  const [planTitle, setPlanTitle] = useState("");
+  const [planSummary, setPlanSummary] = useState("");
+  const [plans, setPlans] = useState<PlanSummary[]>([]);
+  const [loadingPlans, setLoadingPlans] = useState(false);
+  const [plansError, setPlansError] = useState<string | null>(null);
   const latestParseIdRef = useRef(0);
   const hasTriedLocateRef = useRef(false);
   const mapSectionRef = useRef<HTMLDivElement | null>(null);
@@ -364,15 +383,18 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
   );
 
   const clearPrimaryFormFields = useCallback(() => {
-    setField("origin", "");
-    setField("destination", "");
-    setField("days", 1);
-    setField("budget", undefined);
-    setField("partySize", undefined);
-    setField("originCoords", undefined);
+    setForm({
+      ...form,
+      origin: "",
+      destination: "",
+      days: 1,
+      budget: undefined,
+      partySize: undefined,
+      originCoords: undefined
+    });
     setLocationStatus(null);
     detectCurrentOrigin({ updateEmptyOrigin: true });
-  }, [detectCurrentOrigin, setField, setLocationStatus]);
+  }, [detectCurrentOrigin, setForm, form, setLocationStatus]);
 
   const handleVoiceText = (text: string) => {
     const trimmed = text.trim();
@@ -500,6 +522,141 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
   const handlePreferenceToggle = (value: string) => {
     togglePreference(value);
   };
+
+  const fetchPlans = useCallback(async () => {
+    if (!accessToken) {
+      return;
+    }
+
+    setLoadingPlans(true);
+    setPlansError(null);
+
+    try {
+      const response = await fetch(`/api/plans`, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`
+        }
+      });
+
+      const json = await response.json();
+
+      if (!response.ok || !json.ok) {
+        throw new Error(json?.error ?? "获取云端行程失败，请稍后再试。");
+      }
+
+      setPlans(json.data?.items ?? []);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "获取云端行程失败，请稍后再试。";
+      setPlansError(message);
+    } finally {
+      setLoadingPlans(false);
+    }
+  }, [accessToken]);
+
+  useEffect(() => {
+    if (showPlans) {
+      void fetchPlans();
+    }
+  }, [showPlans, fetchPlans]);
+
+  const handleSavePlan = useCallback(async () => {
+    if (!accessToken) {
+      window.alert("请先登录后再保存行程。");
+      return;
+    }
+
+    if (!result) {
+      window.alert("生成行程后才能保存。");
+      return;
+    }
+
+    const title = planTitle.trim() || `${form.destination || "未命名目的地"} 行程`;
+
+    setSavingPlan(true);
+
+    try {
+      const response = await fetch("/api/plans", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`
+        },
+        body: JSON.stringify({
+          title,
+          summary: planSummary.trim() || undefined,
+          form: {
+            destination: form.destination,
+            days: form.days,
+            budget: form.budget,
+            partySize: form.partySize,
+            preferences: form.preferences,
+            origin: form.origin,
+            originCoords: form.originCoords ?? undefined
+          },
+          itinerary: result
+        })
+      });
+
+      const json = await response.json();
+
+      if (!response.ok || !json.ok) {
+        throw new Error(json?.error ?? "保存行程失败，请稍后再试。");
+      }
+
+      setPlanTitle("");
+      setPlanSummary("");
+      window.alert("行程已保存到云端。");
+      setShowPlans(true);
+      void fetchPlans();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "保存行程失败，请稍后再试。";
+      window.alert(message);
+    } finally {
+      setSavingPlan(false);
+    }
+  }, [accessToken, result, planTitle, planSummary, form, fetchPlans]);
+
+  const handleLoadPlan = useCallback(
+    async (planId: string) => {
+      if (!accessToken) {
+        return;
+      }
+
+      setPlansError(null);
+      setLoadingPlans(true);
+
+      try {
+        const response = await fetch(`/api/plans/${planId}`, {
+          headers: {
+            Authorization: `Bearer ${accessToken}`
+          }
+        });
+
+        const json = await response.json();
+
+        if (!response.ok || !json.ok) {
+          throw new Error(json?.error ?? "加载行程失败，请稍后再试。");
+        }
+
+        const data = json.data as {
+          form: PlannerForm;
+          itinerary: NonNullable<typeof result>;
+          title?: string;
+        };
+
+        hydrateFromPlan({ form: data.form, itinerary: data.itinerary });
+        setPlanTitle(data.title ?? "");
+        window.alert("已加载云端行程。");
+        setShowPlans(false);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "加载行程失败，请稍后再试。";
+        setPlansError(message);
+      } finally {
+        setLoadingPlans(false);
+      }
+    },
+    [accessToken, hydrateFromPlan, form, result]
+  );
 
   const handleScrollToMap = useCallback(() => {
     if (!mapSectionRef.current) {
@@ -734,6 +891,90 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
           >
             {loading ? "生成中..." : "生成行程"}
           </button>
+
+          <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-4 text-sm text-slate-300">
+            <h3 className="mb-2 text-base font-semibold text-white">云端行程</h3>
+            <div className="flex flex-col gap-2">
+              <label className="flex flex-col gap-1">
+                <span className="text-xs text-slate-400">行程标题</span>
+                <input
+                  type="text"
+                  value={planTitle}
+                  onChange={(event) => setPlanTitle(event.target.value)}
+                  className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 focus:border-blue-500 focus:outline-none"
+                  placeholder="例如：东京亲子5日游"
+                />
+              </label>
+              <label className="flex flex-col gap-1">
+                <span className="text-xs text-slate-400">摘要备注（可选）</span>
+                <textarea
+                  value={planSummary}
+                  onChange={(event) => setPlanSummary(event.target.value)}
+                  className="h-20 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 focus:border-blue-500 focus:outline-none"
+                  placeholder="简要描述这个行程的亮点或注意事项"
+                />
+              </label>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={handleSavePlan}
+                  disabled={savingPlan}
+                  className="rounded-lg border border-emerald-500 bg-emerald-500/10 px-4 py-2 text-emerald-300 transition hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {savingPlan ? "保存中..." : "保存到云端"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowPlans((prev) => !prev)}
+                  className="rounded-lg border border-slate-700 px-4 py-2 text-slate-200 transition hover:border-blue-500 hover:text-blue-300"
+                >
+                  {showPlans ? "收起云端行程" : "查看云端行程"}
+                </button>
+              </div>
+              {showPlans && (
+                <div className="max-h-64 overflow-y-auto rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+                  {loadingPlans ? (
+                    <p className="text-xs text-slate-400">正在加载...</p>
+                  ) : plansError ? (
+                    <p className="text-xs text-red-400">{plansError}</p>
+                  ) : plans.length === 0 ? (
+                    <p className="text-xs text-slate-400">尚未保存行程。</p>
+                  ) : (
+                    <ul className="flex flex-col gap-2 text-xs">
+                      {plans.map((plan) => (
+                        <li key={plan.id} className="rounded border border-slate-800 bg-slate-900/80 p-2">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-medium text-white" title={plan.title}>
+                                {plan.title}
+                              </p>
+                              {plan.summary && (
+                                <p className="mt-1 line-clamp-2 text-slate-400" title={plan.summary}>
+                                  {plan.summary}
+                                </p>
+                              )}
+                              <p className="mt-1 text-[11px] text-slate-500">
+                                更新于 {new Date(plan.updatedAt).toLocaleString()}
+                              </p>
+                            </div>
+                            <div className="flex flex-col gap-1">
+                              <button
+                                type="button"
+                                onClick={() => handleLoadPlan(plan.id)}
+                                className="rounded border border-blue-500 px-2 py-1 text-[11px] text-blue-300 transition hover:bg-blue-500/10"
+                              >
+                                加载
+                              </button>
+                            </div>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
 
           {error && <p className="text-sm text-red-400">{error}</p>}
 
