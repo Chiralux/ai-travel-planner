@@ -178,11 +178,12 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
         return;
       }
 
-      const setMessage = source === "voice" ? setVoiceMessage : setSmartInputMessage;
+  const setMessage = source === "voice" ? setVoiceMessage : setSmartInputMessage;
+  const prefix = source === "voice" ? "语音识别" : "文字解析";
       const parseId = ++latestParseIdRef.current;
 
       setParsing(true);
-      setMessage(`${source === "voice" ? "语音识别结果" : "解析内容"}：${trimmed}\n正在解析...`);
+  setMessage(`${prefix}：正在解析...`);
 
       const requestBody = {
         text: trimmed,
@@ -220,11 +221,11 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
         }
 
         if (!parsed) {
-          finalize(`${source === "voice" ? "语音识别结果" : "解析内容"}：${trimmed}\n未能识别出有效的行程信息，请尝试描述目的地、天数或预算。`);
+          finalize(`${prefix}：未能识别出有效的行程信息，请尝试描述目的地、天数或预算。`);
           return;
         }
 
-        mergeParsedInput({ form, setField }, parsed);
+  mergeParsedInput({ form, setField }, parsed, { mergePreferences: false });
 
         const summaries: string[] = [];
         if (parsed.destination) {
@@ -247,8 +248,8 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
         }
 
         const feedback = summaries.length
-          ? `${source === "voice" ? "语音识别结果" : "解析内容"}：${trimmed}\n已识别：${summaries.join("，")}`
-          : `${source === "voice" ? "语音识别结果" : "解析内容"}：${trimmed}`;
+          ? `${prefix}成功：${summaries.join("，")}`
+          : `${prefix}成功：已接收输入。`;
 
         finalize(feedback);
       } catch (error) {
@@ -256,11 +257,11 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
         const fallback = localParseTravelInput(trimmed, { knownPreferences });
 
         if (!fallback) {
-          finalize(`${source === "voice" ? "语音识别结果" : "解析内容"}：${trimmed}\n解析失败，请稍后重试。`);
+          finalize(`${prefix}：解析失败，请稍后重试。`);
           return;
         }
 
-        mergeParsedInput({ form, setField }, fallback);
+  mergeParsedInput({ form, setField }, fallback, { mergePreferences: false });
 
         const summaries: string[] = [];
         if (fallback.destination) {
@@ -283,8 +284,8 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
         }
 
         const feedback = summaries.length
-          ? `${source === "voice" ? "语音识别结果" : "解析内容"}：${trimmed}\n已识别（本地解析）：${summaries.join("，")}`
-          : `${source === "voice" ? "语音识别结果" : "解析内容"}：${trimmed}`;
+          ? `${prefix}成功（本地解析）：${summaries.join("，")}`
+          : `${prefix}成功：已接收输入。`;
 
         finalize(feedback);
       }
@@ -392,11 +393,23 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
       days: 1,
       budget: undefined,
       partySize: undefined,
-      originCoords: undefined
+      originCoords: undefined,
+      preferences: []
     });
+    setSmartInput("");
+    setSmartInputMessage(null);
+    setVoiceMessage(null);
     setLocationStatus(null);
     detectCurrentOrigin({ updateEmptyOrigin: true });
-  }, [detectCurrentOrigin, setForm, form, setLocationStatus]);
+  }, [
+    detectCurrentOrigin,
+    form,
+    setForm,
+    setLocationStatus,
+    setSmartInput,
+    setSmartInputMessage,
+    setVoiceMessage
+  ]);
 
   const handleVoiceText = (text: string) => {
     const trimmed = text.trim();
@@ -414,7 +427,7 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
     const trimmed = smartInput.trim();
 
     if (!trimmed) {
-      setSmartInputMessage("请输入自然语言描述，例如：我想去日本，5 天，预算 1 万元，喜欢美食和动漫，带孩子。");
+      setSmartInputMessage("请输入自然语言描述，例如：我们三个人带了1万块钱想去西安玩5 天，喜欢美食和户外活动。");
       return;
     }
 
@@ -809,7 +822,7 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
                 setSmartInputMessage(null);
               }}
               className="h-24 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 focus:border-blue-500 focus:outline-none"
-              placeholder="例如：我想去日本东京玩 5 天，预算 1 万元，带孩子，喜欢美食和动漫"
+              placeholder="例如：我们4个人带了1万块钱想去上海玩4天, 我们喜欢美食和户外活动"
             />
             <div className="flex flex-col gap-2">
               <div className="flex flex-wrap gap-2">
@@ -971,7 +984,7 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
                   value={planTitle}
                   onChange={(event) => setPlanTitle(event.target.value)}
                   className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 focus:border-blue-500 focus:outline-none"
-                  placeholder="例如：东京亲子5日游"
+                  placeholder="例如：上海5日游"
                 />
               </label>
               <label className="flex flex-col gap-1">

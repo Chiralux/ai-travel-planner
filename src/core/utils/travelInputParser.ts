@@ -308,8 +308,11 @@ type PlannerStoreLike = {
 
 export function mergeParsedInput(
   store: PlannerStoreLike,
-  parsed: ParsedTravelInput
+  parsed: ParsedTravelInput,
+  options: { mergePreferences?: boolean } = {}
 ) {
+  const shouldMergePreferences = options.mergePreferences ?? true;
+
   if (parsed.destination) {
     store.setField("destination", parsed.destination);
   }
@@ -326,8 +329,12 @@ export function mergeParsedInput(
     store.setField("partySize", Math.max(1, parsed.partySize));
   }
   if (parsed.preferences) {
-    const existing = store.form.preferences ?? [];
-    const merged = Array.from(new Set([...existing, ...parsed.preferences]));
+    const existing = shouldMergePreferences ? store.form.preferences ?? [] : [];
+    const merged = shouldMergePreferences
+      ? Array.from(new Set([...existing, ...parsed.preferences]))
+      : Array.from(new Set(parsed.preferences));
     store.setField("preferences", merged);
+  } else if (!shouldMergePreferences) {
+    store.setField("preferences", []);
   }
 }
