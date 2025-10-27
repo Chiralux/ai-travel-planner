@@ -4,21 +4,24 @@ import Link from "next/link";
 import { useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useSupabaseAuth } from "../../lib/supabase/AuthProvider";
+import { usePlannerStore } from "../../../lib/store/usePlannerStore";
 
 export function AppHeader() {
   const router = useRouter();
   const { user, loading, signOut } = useSupabaseAuth();
   const [signingOut, setSigningOut] = useState(false);
+  const resetPlanner = usePlannerStore((state) => state.reset);
 
   const handleLogout = useCallback(async () => {
     setSigningOut(true);
     try {
+      resetPlanner();
       await signOut();
       router.push("/auth");
     } finally {
       setSigningOut(false);
     }
-  }, [signOut, router]);
+  }, [signOut, router, resetPlanner]);
 
   return (
     <header className="mb-6 flex items-center justify-between rounded-xl border border-slate-800 bg-slate-900/80 px-4 py-3 shadow">

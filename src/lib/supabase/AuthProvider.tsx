@@ -27,7 +27,7 @@ type AuthContextValue = {
   accessToken: string | null;
   loading: boolean;
   authError: AuthError | null;
-  signInWithOAuth: (provider: Provider) => Promise<OAuthResponse>;
+  signInWithOAuth: (provider: Provider, options?: { redirectTo?: string }) => Promise<OAuthResponse>;
   signInWithPassword: (params: { email: string; password: string }) => Promise<AuthResponse>;
   signUpWithPassword: (params: { email: string; password: string }) => Promise<AuthResponse>;
   resetPasswordForEmail: (params: { email: string; redirectTo?: string }) => ReturnType<SupabaseClient<Database>["auth"]["resetPasswordForEmail"]>;
@@ -80,9 +80,9 @@ export function SupabaseAuthProvider({ children }: { children: ReactNode }) {
   }, [supabase]);
 
   const signInWithOAuth = useCallback<AuthContextValue["signInWithOAuth"]>(
-    async (provider) => {
+    async (provider, options) => {
       setAuthError(null);
-      const result = await supabase.auth.signInWithOAuth({ provider });
+      const result = await supabase.auth.signInWithOAuth({ provider, options });
       if (result.error) {
         setAuthError(result.error);
       }
@@ -142,10 +142,34 @@ export function SupabaseAuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = useCallback(async () => {
     setAuthError(null);
-    const { error } = await supabase.auth.signOut();
-    if (error) {
-      setAuthError(error);
+
+    const { data } = await supabase.auth.getSession();
+    const hasSession = Boolean(data.session);
+
+    const attempt = hasSession ? await supabase.auth.signOut() : { error: null };
+
+    const shouldFallback = Boolean(attempt.error);
+
+    let finalError = attempt.error;
+
+    if (shouldFallback) {
+      if (process.env.NODE_ENV !== "production") {
+        console.warn("[supabase] Global sign-out failed, retrying with local scope", attempt.error?.message);
+      }
+
+      const fallback = await supabase.auth.signOut({ scope: "local" });
+      finalError = fallback.error ?? attempt.error;
+    } else if (!hasSession) {
+      // Ensure local tokens are cleared even if the server no longer recognises the session.
+      await supabase.auth.signOut({ scope: "local" });
     }
+
+    if (finalError && finalError.message !== "Auth session missing!") {
+      setAuthError(finalError);
+      return;
+    }
+
+    setSession(null);
   }, [supabase]);
 
   const value = useMemo<AuthContextValue>(

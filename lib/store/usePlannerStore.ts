@@ -38,6 +38,7 @@ type PlannerState = {
   setForm: (form: PlannerForm) => void;
   hydrateFromPlan: (payload: { form: PlannerForm; itinerary: Itinerary }) => void;
   updateActivity: (dayIndex: number, activityIndex: number, updates: Partial<Activity>) => void;
+  reset: () => void;
 };
 
 const defaultForm: PlannerForm = {
@@ -202,7 +203,16 @@ export const usePlannerStore = create<PlannerState>((set) => ({
           daily_plan: nextDailyPlan
         }
       };
-    })
+    }),
+  reset: () =>
+    set(() => ({
+      form: normalizeForm(defaultForm),
+      result: null,
+      loading: false,
+      error: null,
+      focusedMarker: null,
+      focusHistory: []
+    }))
 }));
 
 export const mapMarkersSelector = (state: PlannerState) => {
