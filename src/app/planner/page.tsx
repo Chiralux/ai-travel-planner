@@ -249,6 +249,7 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
   const latestParseIdRef = useRef(0);
   const hasTriedLocateRef = useRef(false);
   const lastLocatedOriginRef = useRef<{ lat: number; lng: number; label?: string; address?: string } | null>(null);
+  const suppressCustomOriginFetchRef = useRef(false);
   const mapSectionRef = useRef<HTMLDivElement | null>(null);
   const latestNavigationAttemptRef = useRef(0);
   const navigationModeLabel = NAVIGATION_MODE_LABELS[navigationMode];
@@ -1267,6 +1268,10 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
   useEffect(() => {
     const handler = setTimeout(() => {
       if (navigationOriginOption === "custom") {
+        if (suppressCustomOriginFetchRef.current) {
+          suppressCustomOriginFetchRef.current = false;
+          return;
+        }
         void fetchCustomOriginSuggestions(customOriginQuery);
       }
     }, 350);
@@ -1278,6 +1283,7 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
 
   const handleCustomOriginSelect = useCallback(
     (suggestion: { id: string; name: string; subtitle?: string; lat: number; lng: number }) => {
+      suppressCustomOriginFetchRef.current = true;
       setNavigationCustomOrigin({
         lat: suggestion.lat.toFixed(6),
         lng: suggestion.lng.toFixed(6),
@@ -1301,27 +1307,71 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
         lng: point.lng.toFixed(6)
       }));
 
+  let resolvedLabel: string | null = null;
+      const suggestions: Array<{ id: string; name: string; subtitle?: string; lat: number; lng: number }> = [];
+
       try {
         const params = new URLSearchParams({ lat: String(point.lat), lng: String(point.lng) });
         const response = await fetch(`/api/geocode/reverse?${params.toString()}`);
         const json = await response.json();
 
         if (response.ok && json?.ok) {
-          const label = json.data?.label ?? json.data?.formattedAddress ?? "地图选点";
-          setNavigationCustomOrigin((prev) => ({
-            ...prev,
-            label
-          }));
-          setCustomOriginQuery(label);
+          resolvedLabel = json.data?.label ?? json.data?.formattedAddress ?? "地图选点";
+          const label = resolvedLabel ?? "地图选点";
+          suggestions.push({
+            id: "reverse-geocode",
+            name: label,
+            subtitle: json.data?.formattedAddress && json.data?.formattedAddress !== resolvedLabel ? json.data.formattedAddress : undefined,
+            lat: point.lat,
+            lng: point.lng
+          });
+          resolvedLabel = label;
         } else {
-          setCustomOriginQuery(`Lat ${point.lat.toFixed(4)}, Lng ${point.lng.toFixed(4)}`);
+          resolvedLabel = null;
         }
       } catch (error) {
         console.error("Failed to reverse geocode custom origin", error);
-        setCustomOriginQuery(`Lat ${point.lat.toFixed(4)}, Lng ${point.lng.toFixed(4)}`);
+        resolvedLabel = null;
       } finally {
         setCustomOriginSelectMode(false);
       }
+
+      try {
+        const keywords = resolvedLabel ?? `经纬度 ${point.lat.toFixed(4)},${point.lng.toFixed(4)}`;
+        const params = new URLSearchParams({ q: keywords });
+        const response = await fetch(`/api/geocode/forward?${params.toString()}`);
+        const json = await response.json();
+
+        if (response.ok && json?.ok) {
+          const forwardSuggestions = (json.data?.suggestions ?? []) as Array<{
+            id: string;
+            name: string;
+            subtitle?: string;
+            lat: number;
+            lng: number;
+          }>;
+
+          suggestions.push(
+            ...forwardSuggestions.map((item) => ({
+              ...item,
+              id: `search-${item.id}`
+            }))
+          );
+        }
+      } catch (error) {
+        console.warn("Failed to fetch forward suggestions after map select", error);
+      }
+
+      const displayLabel = resolvedLabel ?? `Lat ${point.lat.toFixed(4)}, Lng ${point.lng.toFixed(4)}`;
+      setNavigationCustomOrigin((prev) => ({
+        ...prev,
+        label: displayLabel
+      }));
+
+      suppressCustomOriginFetchRef.current = true;
+      setCustomOriginQuery(displayLabel);
+      setCustomOriginSuggestions(suggestions);
+      setCustomOriginError(null);
     },
     []
   );
