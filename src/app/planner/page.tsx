@@ -7,7 +7,12 @@ import { useRouter } from "next/navigation";
 import { VoiceRecorder } from "../../../ui/components/VoiceRecorder";
 import { MapView } from "../../../ui/components/MapView";
 import { ItineraryTimeline } from "../../../ui/components/ItineraryTimeline";
-import { usePlannerStore, mapMarkersSelector, type PlannerForm } from "../../../lib/store/usePlannerStore";
+import {
+  usePlannerStore,
+  mapMarkersSelector,
+  type PlannerForm,
+  type PlannerRoute
+} from "../../../lib/store/usePlannerStore";
 import { mergeParsedInput, parseTravelInput as localParseTravelInput } from "../../core/utils/travelInputParser";
 import { useSupabaseAuth } from "../../lib/supabase/AuthProvider";
 
@@ -24,6 +29,20 @@ type PlanSummary = {
 type FloatingMapOverlayProps = Pick<ComponentProps<typeof MapView>, "markers" | "focusedMarker" | "route"> & {
   onScrollToMap: () => void;
 };
+
+const NAVIGATION_MODE_LABELS: Record<PlannerRoute["mode"], string> = {
+  driving: "驾车",
+  walking: "步行",
+  cycling: "骑行",
+  transit: "公交/地铁"
+};
+
+const NAVIGATION_MODE_SEQUENCE: PlannerRoute["mode"][] = [
+  "driving",
+  "walking",
+  "cycling",
+  "transit"
+];
 
 function FloatingMapOverlay({ markers, focusedMarker, route, onScrollToMap }: FloatingMapOverlayProps) {
   const [container, setContainer] = useState<HTMLElement | null>(null);
@@ -206,10 +225,12 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
   const [activePlanId, setActivePlanId] = useState<string | null>(null);
   const [navigationStatus, setNavigationStatus] = useState<string | null>(null);
   const [navigationLoading, setNavigationLoading] = useState(false);
+  const [navigationMode, setNavigationMode] = useState<PlannerRoute["mode"]>("driving");
   const latestParseIdRef = useRef(0);
   const hasTriedLocateRef = useRef(false);
   const mapSectionRef = useRef<HTMLDivElement | null>(null);
   const latestNavigationAttemptRef = useRef(0);
+  const navigationModeLabel = NAVIGATION_MODE_LABELS[navigationMode];
 
   const knownPreferences = useMemo(
     () => Array.from(new Set([...preferenceOptions, ...form.preferences])),
@@ -835,6 +856,7 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
   const shouldShowFloatingMap = isClient && !isMapVisible && markers.length > 0;
   const hasMarkerHistory = focusHistory.length > 0;
   const routeForMap = activeRoute ? { points: activeRoute.points } : null;
+  const activeRouteModeLabel = activeRoute ? NAVIGATION_MODE_LABELS[activeRoute.mode] : null;
 
   const floatingMapOverlay = shouldShowFloatingMap ? (
     <FloatingMapOverlay
@@ -889,8 +911,14 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
     [result, form.originCoords, form.origin]
   );
 
+  const lastSuccessfulNavigationRef = useRef<{ dayIndex: number; activityIndex: number } | null>(null);
+
   const handleNavigateToActivity = useCallback(
-    async (dayIndex: number, activityIndex: number) => {
+    async (
+      dayIndex: number,
+      activityIndex: number,
+      options?: { reuseExistingRequestId?: number }
+    ) => {
       if (!result) {
         setNavigationStatus("请先生成行程，再尝试导航。");
         return;
@@ -916,10 +944,10 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
         return;
       }
 
-      const requestId = latestNavigationAttemptRef.current + 1;
+      const requestId = options?.reuseExistingRequestId ?? latestNavigationAttemptRef.current + 1;
       latestNavigationAttemptRef.current = requestId;
       setNavigationLoading(true);
-      setNavigationStatus("正在请求高德路线...");
+      setNavigationStatus(`正在请求高德路线（${navigationModeLabel}）...`);
 
       const headers: Record<string, string> = {
         "Content-Type": "application/json"
@@ -930,13 +958,25 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
       }
 
       try {
+        const requestBody: {
+          origin: { lat: number; lng: number };
+          destination: { lat: number; lng: number };
+          mode: PlannerRoute["mode"];
+          strategy?: string;
+        } = {
+          origin: { lat: origin.lat, lng: origin.lng },
+          destination: { lat: activity.lat, lng: activity.lng },
+          mode: navigationMode
+        };
+
+        if (navigationMode === "driving") {
+          requestBody.strategy = "0";
+        }
+
         const response = await fetch("/api/maps/directions", {
           method: "POST",
           headers,
-          body: JSON.stringify({
-            origin: { lat: origin.lat, lng: origin.lng },
-            destination: { lat: activity.lat, lng: activity.lng }
-          })
+          body: JSON.stringify(requestBody)
         });
 
         const json = await response.json();
@@ -946,15 +986,15 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
           throw new Error(errorMessage);
         }
 
-        if (latestNavigationAttemptRef.current !== requestId) {
-          return;
-        }
-
         const data = json.data as {
           points: Array<{ lat: number; lng: number }>;
           distanceMeters: number;
           durationSeconds: number;
+          mode: PlannerRoute["mode"];
         };
+
+        const resolvedMode = data.mode ?? navigationMode;
+        const resolvedModeLabel = NAVIGATION_MODE_LABELS[resolvedMode];
 
         setRoute({
           points: data.points,
@@ -966,8 +1006,11 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
             lng: activity.lng,
             label: activity.title,
             address: activity.address
-          }
+          },
+          mode: resolvedMode
         });
+
+        lastSuccessfulNavigationRef.current = { dayIndex, activityIndex };
 
         setFocusedMarker({
           lat: activity.lat,
@@ -978,7 +1021,9 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
 
         setIsMapVisible(true);
         setNavigationStatus(
-          `路线已更新：约 ${formatDistance(data.distanceMeters)}，预计耗时 ${formatDuration(data.durationSeconds)}。`
+          `路线已更新（${resolvedModeLabel}）：约 ${formatDistance(data.distanceMeters)}，预计耗时 ${formatDuration(
+            data.durationSeconds
+          )}。`
         );
       } catch (error) {
         if (latestNavigationAttemptRef.current !== requestId) {
@@ -986,18 +1031,39 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
         }
 
         const message = error instanceof Error ? error.message : "路线请求失败，请稍后再试。";
-        setNavigationStatus(message);
+        setNavigationStatus(`${message}（${navigationModeLabel}）`);
       } finally {
         if (latestNavigationAttemptRef.current === requestId) {
           setNavigationLoading(false);
         }
       }
     },
-    [result, resolveNavigationOrigin, setRoute, setFocusedMarker, setIsMapVisible, accessToken]
+    [
+      result,
+      resolveNavigationOrigin,
+      setRoute,
+      setFocusedMarker,
+      setIsMapVisible,
+      accessToken,
+      navigationMode,
+      navigationModeLabel
+    ]
   );
+
+  useEffect(() => {
+    if (!lastSuccessfulNavigationRef.current) {
+      return;
+    }
+
+    const { dayIndex, activityIndex } = lastSuccessfulNavigationRef.current;
+    void handleNavigateToActivity(dayIndex, activityIndex, {
+      reuseExistingRequestId: latestNavigationAttemptRef.current + 1
+    });
+  }, [navigationMode, handleNavigateToActivity]);
 
   const handleClearRoute = useCallback(() => {
     clearRoute();
+    lastSuccessfulNavigationRef.current = null;
     setNavigationStatus("已移除导航路线。");
     setNavigationLoading(false);
   }, [clearRoute]);
@@ -1350,6 +1416,27 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
               )}
             </div>
           </header>
+          <div className="flex flex-wrap items-center gap-2 text-xs text-slate-300">
+            <span className="text-slate-400">导航方式：</span>
+            {NAVIGATION_MODE_SEQUENCE.map((mode) => {
+              const label = NAVIGATION_MODE_LABELS[mode];
+              const isActive = navigationMode === mode;
+              return (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => setNavigationMode(mode)}
+                  className={`rounded-full border px-3 py-1 transition ${
+                    isActive
+                      ? "border-cyan-400 bg-cyan-500/20 text-cyan-100"
+                      : "border-slate-700 bg-slate-900 text-slate-300 hover:border-cyan-400 hover:text-cyan-100"
+                  }`}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
           <div className="relative h-80">
             <MapView
               markers={markers}

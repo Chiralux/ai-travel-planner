@@ -27,6 +27,7 @@ export type PlannerRoute = {
   durationSeconds: number;
   origin?: FocusableMarker;
   destination?: FocusableMarker;
+  mode: "driving" | "walking" | "cycling" | "transit";
 };
 
 type PlannerState = {

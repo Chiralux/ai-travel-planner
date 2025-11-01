@@ -16,6 +16,7 @@ type ItineraryTimelineProps = {
   onActivitySelect?: (activityElementId: string) => void;
   onActivityUpdate?: (dayIndex: number, activityIndex: number, updates: Partial<Activity>) => void;
   onActivityNavigate?: (dayIndex: number, activityIndex: number) => void;
+  navigationModeLabel?: string;
 };
 
 type ActivityEditorState = {
@@ -38,7 +39,14 @@ function formatConfidenceLabel(confidence?: number): string | null {
   return `置信度 ${clamped}%`;
 }
 
-export function ItineraryTimeline({ itinerary, onActivityFocus, onActivitySelect, onActivityUpdate, onActivityNavigate }: ItineraryTimelineProps) {
+export function ItineraryTimeline({
+  itinerary,
+  onActivityFocus,
+  onActivitySelect,
+  onActivityUpdate,
+  onActivityNavigate,
+  navigationModeLabel
+}: ItineraryTimelineProps) {
   const [expandedActivities, setExpandedActivities] = useState<Set<string>>(() => new Set());
   const [editorState, setEditorState] = useState<ActivityEditorState | null>(null);
   const canEdit = typeof onActivityUpdate === "function";
@@ -284,7 +292,7 @@ export function ItineraryTimeline({ itinerary, onActivityFocus, onActivitySelect
                                 disabled={!hasCoords}
                                 title={hasCoords ? "使用地图导航" : "当前活动缺少坐标"}
                               >
-                                导航
+                                {navigationModeLabel ? `导航（${navigationModeLabel}）` : "导航"}
                               </button>
                             )}
                           </>

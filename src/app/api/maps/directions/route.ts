@@ -3,157 +3,360 @@ import { z } from "zod";
 import { loadEnv } from "../../../../core/config/env";
 
 const requestSchema = z.object({
-	origin: z.object({
-		lat: z.number(),
-		lng: z.number()
-	}),
-	destination: z.object({
-		lat: z.number(),
-		lng: z.number()
-	}),
-		strategy: z
-			.union([
-				z.literal("0"),
-				z.literal("1"),
-				z.literal("2"),
-				z.literal("3"),
-				z.literal("4"),
-				z.literal("5"),
-				z.literal("6"),
-				z.literal("7"),
-				z.literal("8"),
-				z.literal("9"),
-				z.literal("10"),
-				z.literal("11")
-			])
-			.optional()
+  origin: z.object({
+    lat: z.number(),
+    lng: z.number()
+  }),
+  destination: z.object({
+    lat: z.number(),
+    lng: z.number()
+  }),
+  mode: z.enum(["driving", "walking", "cycling", "transit"]).default("driving"),
+  strategy: z
+    .union([
+      z.literal("0"),
+      z.literal("1"),
+      z.literal("2"),
+      z.literal("3"),
+      z.literal("4"),
+      z.literal("5"),
+      z.literal("6"),
+      z.literal("7"),
+      z.literal("8"),
+      z.literal("9"),
+      z.literal("10"),
+      z.literal("11")
+    ])
+    .optional()
 });
 
-const GAODE_DIRECTION_URL = "https://restapi.amap.com/v3/direction/driving";
+const GAODE_ENDPOINTS = {
+  driving: "https://restapi.amap.com/v3/direction/driving",
+  walking: "https://restapi.amap.com/v3/direction/walking",
+  cycling: "https://restapi.amap.com/v4/direction/bicycling",
+  transit: "https://restapi.amap.com/v3/direction/transit/integrated"
+} as const;
 
-type GaodeDirectionResponse = {
-	status?: string;
-	info?: string;
-	infocode?: string;
-	route?: {
-		paths?: Array<{
-			distance?: string;
-			duration?: string;
-			steps?: Array<{
-				polyline?: string;
-			}>;
-		}>;
-	};
+type PolylineCarrier = { polyline?: string };
+
+type GaodeDrivingWalkingResponse = {
+  status?: string;
+  info?: string;
+  route?: {
+    paths?: Array<{
+      distance?: string;
+      duration?: string;
+      steps?: PolylineCarrier[];
+    }>;
+  };
 };
 
-const parsePolyline = (steps: Array<{ polyline?: string }> | undefined): Array<{ lat: number; lng: number }> => {
-	if (!Array.isArray(steps)) {
-		return [];
-	}
-
-	const points: Array<{ lat: number; lng: number }> = [];
-
-	for (const step of steps) {
-		if (!step?.polyline) {
-			continue;
-		}
-
-		const segments = step.polyline.split(";");
-
-		for (const segment of segments) {
-			const [lngText, latText] = segment.split(",");
-			const lng = Number.parseFloat(lngText);
-			const lat = Number.parseFloat(latText);
-
-			if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-				continue;
-			}
-
-			const isDuplicate = points.length > 0 && Math.abs(points[points.length - 1].lat - lat) < 1e-6 && Math.abs(points[points.length - 1].lng - lng) < 1e-6;
-
-			if (!isDuplicate) {
-				points.push({ lat, lng });
-			}
-		}
-	}
-
-	return points;
+type GaodeCyclingResponse = {
+  errcode?: number;
+  errmsg?: string;
+  data?: {
+    paths?: Array<{
+      distance?: number;
+      duration?: number;
+      steps?: PolylineCarrier[];
+    }>;
+  };
 };
+
+type GaodeTransitResponse = {
+  status?: string;
+  info?: string;
+  route?: {
+    transits?: Array<{
+      distance?: string;
+      duration?: string;
+      segments?: Array<{
+        walking?: {
+          steps?: PolylineCarrier[];
+        };
+        bus?: {
+          buslines?: PolylineCarrier[];
+        };
+        railway?: {
+          alins?: PolylineCarrier[];
+        };
+        taxi?: {
+          path?: string;
+        };
+      }>;
+    }>;
+  };
+};
+
+function pushPoint(points: Array<{ lat: number; lng: number }>, lat: number, lng: number) {
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return;
+  }
+
+  const last = points[points.length - 1];
+  const isDuplicate =
+    last && Math.abs(last.lat - lat) < 1e-6 && Math.abs(last.lng - lng) < 1e-6;
+
+  if (!isDuplicate) {
+    points.push({ lat, lng });
+  }
+}
+
+function appendPolyline(points: Array<{ lat: number; lng: number }>, polyline?: string) {
+  if (!polyline) {
+    return;
+  }
+
+  const segments = polyline.split(";");
+
+  for (const segment of segments) {
+    const [lngText, latText] = segment.split(",");
+    const lng = Number.parseFloat(lngText);
+    const lat = Number.parseFloat(latText);
+    pushPoint(points, lat, lng);
+  }
+}
+
+function appendStepCollection(points: Array<{ lat: number; lng: number }>, steps?: PolylineCarrier[]) {
+  if (!Array.isArray(steps)) {
+    return;
+  }
+
+  for (const step of steps) {
+    appendPolyline(points, step?.polyline);
+  }
+}
+
+function parseNumeric(value?: string | number | null): number {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : 0;
+  }
+
+  if (typeof value === "string") {
+    const parsed = Number.parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  return 0;
+}
 
 export async function POST(request: NextRequest) {
-	const env = loadEnv();
+  const env = loadEnv();
 
-	if (!env.AMAP_REST_KEY) {
-		return NextResponse.json({ ok: false, error: "AMAP_REST_KEY not configured" }, { status: 500 });
-	}
+  if (!env.AMAP_REST_KEY) {
+    return NextResponse.json({ ok: false, error: "AMAP_REST_KEY not configured" }, { status: 500 });
+  }
 
-	let payload: z.infer<typeof requestSchema>;
+  let payload: z.infer<typeof requestSchema>;
 
-	try {
-		const json = await request.json();
-		payload = requestSchema.parse(json);
-	} catch (error) {
-		return NextResponse.json({ ok: false, error: "Invalid request payload" }, { status: 400 });
-	}
+  try {
+    const json = await request.json();
+    payload = requestSchema.parse(json);
+  } catch {
+    return NextResponse.json({ ok: false, error: "Invalid request payload" }, { status: 400 });
+  }
 
-	const origin = `${payload.origin.lng},${payload.origin.lat}`;
-	const destination = `${payload.destination.lng},${payload.destination.lat}`;
+  const origin = `${payload.origin.lng},${payload.origin.lat}`;
+  const destination = `${payload.destination.lng},${payload.destination.lat}`;
 
-	const url = new URL(GAODE_DIRECTION_URL);
-	url.searchParams.set("key", env.AMAP_REST_KEY);
-	url.searchParams.set("origin", origin);
-	url.searchParams.set("destination", destination);
-	url.searchParams.set("extensions", "base");
-	url.searchParams.set("strategy", payload.strategy ?? "0");
+  switch (payload.mode) {
+    case "cycling":
+      return handleCycling(origin, destination, env.AMAP_REST_KEY);
+    case "transit":
+      return handleTransit(origin, destination, env.AMAP_REST_KEY);
+    case "walking":
+      return handleDrivingOrWalking("walking", origin, destination, env.AMAP_REST_KEY);
+    case "driving":
+    default:
+      return handleDrivingOrWalking("driving", origin, destination, env.AMAP_REST_KEY, payload.strategy);
+  }
+}
 
-	let upstreamJson: GaodeDirectionResponse;
-	let upstreamStatus = 200;
+async function handleDrivingOrWalking(
+  mode: "driving" | "walking",
+  origin: string,
+  destination: string,
+  apiKey: string,
+  strategy?: string
+) {
+  const url = new URL(GAODE_ENDPOINTS[mode]);
+  url.searchParams.set("key", apiKey);
+  url.searchParams.set("origin", origin);
+  url.searchParams.set("destination", destination);
+  url.searchParams.set("extensions", "base");
+  if (mode === "driving") {
+    url.searchParams.set("strategy", strategy ?? "0");
+  }
 
-	try {
-		const upstream = await fetch(url.toString(), { cache: "no-store" });
-		upstreamStatus = upstream.status;
-		upstreamJson = (await upstream.json()) as GaodeDirectionResponse;
-	} catch (error) {
-		return NextResponse.json({ ok: false, error: "Failed to reach Gaode API" }, { status: 502 });
-	}
+  let upstreamJson: GaodeDrivingWalkingResponse;
+  let upstreamStatus = 200;
 
-	if (!upstreamJson || upstreamJson.status !== "1" || !upstreamJson.route?.paths?.length) {
-		const message = upstreamJson?.info ?? "Gaode API returned no route";
-		return NextResponse.json(
-			{
-				ok: false,
-				error: message,
-				details: upstreamJson,
-				status: upstreamStatus
-			},
-			{ status: 502 }
-		);
-	}
+  try {
+    const upstream = await fetch(url.toString(), { cache: "no-store" });
+    upstreamStatus = upstream.status;
+    upstreamJson = (await upstream.json()) as GaodeDrivingWalkingResponse;
+  } catch {
+    return NextResponse.json({ ok: false, error: "Failed to reach Gaode API" }, { status: 502 });
+  }
 
-	const primaryPath = upstreamJson.route.paths[0];
-		const parsedDistance = Number.parseInt(primaryPath?.distance ?? "0", 10);
-		const parsedDuration = Number.parseInt(primaryPath?.duration ?? "0", 10);
-		const distanceMeters = Number.isFinite(parsedDistance) ? parsedDistance : 0;
-		const durationSeconds = Number.isFinite(parsedDuration) ? parsedDuration : 0;
-	const points = parsePolyline(primaryPath?.steps);
+  if (!upstreamJson || upstreamJson.status !== "1" || !upstreamJson.route?.paths?.length) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: upstreamJson?.info ?? "Gaode API returned no route",
+        details: upstreamJson,
+        status: upstreamStatus
+      },
+      { status: 502 }
+    );
+  }
 
-	if (points.length < 2) {
-		return NextResponse.json(
-			{
-				ok: false,
-				error: "Failed to parse route polyline",
-				details: upstreamJson
-			},
-			{ status: 502 }
-		);
-	}
+  const path = upstreamJson.route.paths[0];
+  const points: Array<{ lat: number; lng: number }> = [];
+  appendStepCollection(points, path.steps);
 
-	return NextResponse.json({
-		ok: true,
-		data: {
-					points,
-					distanceMeters,
-					durationSeconds
-		}
-	});
+  if (points.length < 2) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "Failed to parse route polyline",
+        details: upstreamJson
+      },
+      { status: 502 }
+    );
+  }
+
+  return NextResponse.json({
+    ok: true,
+    data: {
+      points,
+      distanceMeters: parseNumeric(path.distance),
+      durationSeconds: parseNumeric(path.duration),
+      mode
+    }
+  });
+}
+
+async function handleCycling(origin: string, destination: string, apiKey: string) {
+  const url = new URL(GAODE_ENDPOINTS.cycling);
+  url.searchParams.set("key", apiKey);
+  url.searchParams.set("origin", origin);
+  url.searchParams.set("destination", destination);
+
+  let upstreamJson: GaodeCyclingResponse;
+  let upstreamStatus = 200;
+
+  try {
+    const upstream = await fetch(url.toString(), { cache: "no-store" });
+    upstreamStatus = upstream.status;
+    upstreamJson = (await upstream.json()) as GaodeCyclingResponse;
+  } catch {
+    return NextResponse.json({ ok: false, error: "Failed to reach Gaode API" }, { status: 502 });
+  }
+
+  const path = upstreamJson?.data?.paths?.[0];
+
+  if (!path || upstreamJson?.errcode) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: upstreamJson?.errmsg ?? "Gaode cycling API returned no route",
+        details: upstreamJson,
+        status: upstreamStatus
+      },
+      { status: 502 }
+    );
+  }
+
+  const points: Array<{ lat: number; lng: number }> = [];
+  appendStepCollection(points, path.steps);
+
+  if (points.length < 2) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "Failed to parse cycling route",
+        details: upstreamJson
+      },
+      { status: 502 }
+    );
+  }
+
+  return NextResponse.json({
+    ok: true,
+    data: {
+      points,
+      distanceMeters: parseNumeric(path.distance),
+      durationSeconds: parseNumeric(path.duration),
+      mode: "cycling"
+    }
+  });
+}
+
+async function handleTransit(origin: string, destination: string, apiKey: string) {
+  const url = new URL(GAODE_ENDPOINTS.transit);
+  url.searchParams.set("key", apiKey);
+  url.searchParams.set("origin", origin);
+  url.searchParams.set("destination", destination);
+  url.searchParams.set("city", "");
+  url.searchParams.set("extensions", "base");
+  url.searchParams.set("strategy", "0");
+
+  let upstreamJson: GaodeTransitResponse;
+  let upstreamStatus = 200;
+
+  try {
+    const upstream = await fetch(url.toString(), { cache: "no-store" });
+    upstreamStatus = upstream.status;
+    upstreamJson = (await upstream.json()) as GaodeTransitResponse;
+  } catch {
+    return NextResponse.json({ ok: false, error: "Failed to reach Gaode API" }, { status: 502 });
+  }
+
+  if (!upstreamJson || upstreamJson.status !== "1" || !upstreamJson.route?.transits?.length) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: upstreamJson?.info ?? "Gaode transit API returned no route",
+        details: upstreamJson,
+        status: upstreamStatus
+      },
+      { status: 502 }
+    );
+  }
+
+  const transit = upstreamJson.route.transits[0];
+  const points: Array<{ lat: number; lng: number }> = [];
+
+  if (transit.segments) {
+    for (const segment of transit.segments) {
+      appendStepCollection(points, segment.walking?.steps);
+      appendStepCollection(points, segment.bus?.buslines);
+      appendStepCollection(points, segment.railway?.alins);
+      if (segment.taxi?.path) {
+        appendPolyline(points, segment.taxi.path);
+      }
+    }
+  }
+
+  if (points.length < 2) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "Failed to parse transit route",
+        details: upstreamJson
+      },
+      { status: 502 }
+    );
+  }
+
+  return NextResponse.json({
+    ok: true,
+    data: {
+      points,
+      distanceMeters: parseNumeric(transit.distance),
+      durationSeconds: parseNumeric(transit.duration),
+      mode: "transit"
+    }
+  });
 }
