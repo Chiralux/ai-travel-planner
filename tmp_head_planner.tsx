@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -16,7 +16,7 @@ import {
 import { mergeParsedInput, parseTravelInput as localParseTravelInput } from "../../core/utils/travelInputParser";
 import { useSupabaseAuth } from "../../lib/supabase/AuthProvider";
 
-const preferenceOptions = ["美食", "文化", "户外", "亲子", "夜生活", "艺术"];
+const preferenceOptions = ["缇庨", "鏂囧寲", "鎴峰", "浜插瓙", "澶滅敓娲?, "鑹烘湳"];
 
 type PlanSummary = {
   id: string;
@@ -31,10 +31,10 @@ type FloatingMapOverlayProps = Pick<ComponentProps<typeof MapView>, "markers" | 
 };
 
 const NAVIGATION_MODE_LABELS: Record<PlannerRoute["mode"], string> = {
-  driving: "驾车",
-  walking: "步行",
-  cycling: "骑行",
-  transit: "公交/地铁"
+  driving: "椹捐溅",
+  walking: "姝ヨ",
+  cycling: "楠戣",
+  transit: "鍏氦/鍦伴搧"
 };
 
 const NAVIGATION_MODE_SEQUENCE: PlannerRoute["mode"][] = [
@@ -43,14 +43,6 @@ const NAVIGATION_MODE_SEQUENCE: PlannerRoute["mode"][] = [
   "cycling",
   "transit"
 ];
-
-type NavigationOriginOption = "previous-activity" | "current-location" | "custom";
-
-const NAVIGATION_ORIGIN_LABELS: Record<NavigationOriginOption, string> = {
-  "previous-activity": "上一活动",
-  "current-location": "当前位置",
-  custom: "自定义起点"
-};
 
 function FloatingMapOverlay({ markers, focusedMarker, route, onScrollToMap }: FloatingMapOverlayProps) {
   const [container, setContainer] = useState<HTMLElement | null>(null);
@@ -85,13 +77,13 @@ function FloatingMapOverlay({ markers, focusedMarker, route, onScrollToMap }: Fl
     <div>
       <div className="w-[280px] max-w-[90vw] rounded-2xl border border-slate-800 bg-slate-950/80 p-2 shadow-2xl backdrop-blur">
         <div className="mb-2 flex items-center justify-between text-xs text-slate-300">
-          <span className="font-medium text-slate-200">快速地图预览</span>
+          <span className="font-medium text-slate-200">蹇€熷湴鍥鹃瑙?/span>
           <button
             type="button"
             onClick={onScrollToMap}
             className="rounded-md border border-slate-700 px-2 py-1 text-[11px] text-slate-200 transition hover:border-blue-500 hover:text-blue-300"
           >
-            回到地图
+            鍥炲埌鍦板浘
           </button>
         </div>
         <MapView markers={markers} focusedMarker={focusedMarker} compact showInfoWindow={false} route={route} />
@@ -111,10 +103,10 @@ function formatDistance(meters: number | undefined): string {
   if (value >= 1000) {
     const kilometres = value / 1000;
     const formatted = kilometres >= 10 ? Math.round(kilometres).toString() : kilometres.toFixed(1);
-    return `${formatted} 公里`;
+    return `${formatted} 鍏噷`;
   }
 
-  return `${Math.round(value)} 米`;
+  return `${Math.round(value)} 绫砢;
 }
 
 function formatDuration(seconds: number | undefined): string {
@@ -128,14 +120,14 @@ function formatDuration(seconds: number | undefined): string {
   const remainingSeconds = totalSeconds % 60;
 
   if (hours > 0) {
-    return `${hours} 小时${minutes > 0 ? ` ${minutes} 分` : ""}`;
+    return `${hours} 灏忔椂${minutes > 0 ? ` ${minutes} 鍒哷 : ""}`;
   }
 
   if (minutes > 0) {
-    return `${minutes} 分${remainingSeconds > 0 ? ` ${remainingSeconds} 秒` : ""}`;
+    return `${minutes} 鍒?{remainingSeconds > 0 ? ` ${remainingSeconds} 绉抈 : ""}`;
   }
 
-  return `${remainingSeconds} 秒`;
+  return `${remainingSeconds} 绉抈;
 }
 
 export default function PlannerPage() {
@@ -151,7 +143,7 @@ export default function PlannerPage() {
   if (authLoading) {
     return (
       <p className="rounded-xl border border-slate-800 bg-slate-900/80 p-6 text-center text-slate-300">
-        正在验证登录状态...
+        姝ｅ湪楠岃瘉鐧诲綍鐘舵€?..
       </p>
     );
   }
@@ -159,7 +151,7 @@ export default function PlannerPage() {
   if (!session) {
     return (
       <p className="rounded-xl border border-slate-800 bg-slate-900/80 p-6 text-center text-slate-300">
-        需要登录后才能使用行程规划功能，正在跳转...
+        闇€瑕佺櫥褰曞悗鎵嶈兘浣跨敤琛岀▼瑙勫垝鍔熻兘锛屾鍦ㄨ烦杞?..
       </p>
     );
   }
@@ -234,17 +226,11 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
   const [navigationStatus, setNavigationStatus] = useState<string | null>(null);
   const [navigationLoading, setNavigationLoading] = useState(false);
   const [navigationMode, setNavigationMode] = useState<PlannerRoute["mode"]>("driving");
-  const [navigationOriginOption, setNavigationOriginOption] = useState<NavigationOriginOption>("previous-activity");
-  const [navigationCustomOrigin, setNavigationCustomOrigin] = useState<{ lat: string; lng: string; label: string }>(
-    () => ({ lat: "", lng: "", label: "" })
-  );
   const latestParseIdRef = useRef(0);
   const hasTriedLocateRef = useRef(false);
-  const lastLocatedOriginRef = useRef<{ lat: number; lng: number; label?: string; address?: string } | null>(null);
   const mapSectionRef = useRef<HTMLDivElement | null>(null);
   const latestNavigationAttemptRef = useRef(0);
   const navigationModeLabel = NAVIGATION_MODE_LABELS[navigationMode];
-  const navigationOriginLabel = NAVIGATION_ORIGIN_LABELS[navigationOriginOption];
 
   const knownPreferences = useMemo(
     () => Array.from(new Set([...preferenceOptions, ...form.preferences])),
@@ -259,12 +245,12 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
         return;
       }
 
-      const setMessage = source === "voice" ? setVoiceMessage : setSmartInputMessage;
-      const prefix = source === "voice" ? "语音识别" : "文字解析";
+  const setMessage = source === "voice" ? setVoiceMessage : setSmartInputMessage;
+  const prefix = source === "voice" ? "璇煶璇嗗埆" : "鏂囧瓧瑙ｆ瀽";
       const parseId = ++latestParseIdRef.current;
 
       setParsing(true);
-      setMessage(`${prefix}：正在解析...`);
+  setMessage(`${prefix}锛氭鍦ㄨВ鏋?..`);
 
       const requestBody = {
         text: trimmed,
@@ -302,35 +288,35 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
         }
 
         if (!parsed) {
-          finalize(`${prefix}：未能识别出有效的行程信息，请尝试描述目的地、天数或预算。`);
+          finalize(`${prefix}锛氭湭鑳借瘑鍒嚭鏈夋晥鐨勮绋嬩俊鎭紝璇峰皾璇曟弿杩扮洰鐨勫湴銆佸ぉ鏁版垨棰勭畻銆俙);
           return;
         }
 
-        mergeParsedInput({ form, setField }, parsed, { mergePreferences: false });
+  mergeParsedInput({ form, setField }, parsed, { mergePreferences: false });
 
         const summaries: string[] = [];
         if (parsed.destination) {
-          summaries.push(`目的地 ${parsed.destination}`);
+          summaries.push(`鐩殑鍦?${parsed.destination}`);
         }
         if (parsed.days) {
-          summaries.push(`天数 ${parsed.days} 天`);
+          summaries.push(`澶╂暟 ${parsed.days} 澶ー);
         }
         if (typeof parsed.budget === "number") {
-          summaries.push(`预算约 ¥${parsed.budget}`);
+          summaries.push(`棰勭畻绾?楼${parsed.budget}`);
         }
         if (parsed.partySize) {
-          summaries.push(`同行 ${parsed.partySize} 人`);
+          summaries.push(`鍚岃 ${parsed.partySize} 浜篳);
         }
         if (parsed.preferences?.length) {
-          summaries.push(`偏好 ${parsed.preferences.join("、")}`);
+          summaries.push(`鍋忓ソ ${parsed.preferences.join("銆?)}`);
         }
         if (parsed.origin) {
-          summaries.push(`出发地 ${parsed.origin}`);
+          summaries.push(`鍑哄彂鍦?${parsed.origin}`);
         }
 
         const feedback = summaries.length
-          ? `${prefix}成功：${summaries.join("，")}`
-          : `${prefix}成功：已接收输入。`;
+          ? `${prefix}鎴愬姛锛?{summaries.join("锛?)}`
+          : `${prefix}鎴愬姛锛氬凡鎺ユ敹杈撳叆銆俙;
 
         finalize(feedback);
       } catch (error) {
@@ -338,35 +324,35 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
         const fallback = localParseTravelInput(trimmed, { knownPreferences });
 
         if (!fallback) {
-          finalize(`${prefix}：解析失败，请稍后重试。`);
+          finalize(`${prefix}锛氳В鏋愬け璐ワ紝璇风◢鍚庨噸璇曘€俙);
           return;
         }
 
-        mergeParsedInput({ form, setField }, fallback, { mergePreferences: false });
+  mergeParsedInput({ form, setField }, fallback, { mergePreferences: false });
 
         const summaries: string[] = [];
         if (fallback.destination) {
-          summaries.push(`目的地 ${fallback.destination}`);
+          summaries.push(`鐩殑鍦?${fallback.destination}`);
         }
         if (fallback.days) {
-          summaries.push(`天数 ${fallback.days} 天`);
+          summaries.push(`澶╂暟 ${fallback.days} 澶ー);
         }
         if (typeof fallback.budget === "number") {
-          summaries.push(`预算约 ¥${fallback.budget}`);
+          summaries.push(`棰勭畻绾?楼${fallback.budget}`);
         }
         if (fallback.partySize) {
-          summaries.push(`同行 ${fallback.partySize} 人`);
+          summaries.push(`鍚岃 ${fallback.partySize} 浜篳);
         }
         if (fallback.preferences?.length) {
-          summaries.push(`偏好 ${fallback.preferences.join("、")}`);
+          summaries.push(`鍋忓ソ ${fallback.preferences.join("銆?)}`);
         }
         if (fallback.origin) {
-          summaries.push(`出发地 ${fallback.origin}`);
+          summaries.push(`鍑哄彂鍦?${fallback.origin}`);
         }
 
         const feedback = summaries.length
-          ? `${prefix}成功（本地解析）：${summaries.join("，")}`
-          : `${prefix}成功：已接收输入。`;
+          ? `${prefix}鎴愬姛锛堟湰鍦拌В鏋愶級锛?{summaries.join("锛?)}`
+          : `${prefix}鎴愬姛锛氬凡鎺ユ敹杈撳叆銆俙;
 
         finalize(feedback);
       }
@@ -386,180 +372,85 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
   }, []);
 
   const detectCurrentOrigin = useCallback(
-    async (options?: { updateEmptyOrigin?: boolean; silent?: boolean; forceUpdateOrigin?: boolean }) => {
+    (options?: { updateEmptyOrigin?: boolean }) => {
+      if (locating) {
+        return;
+      }
+
       if (typeof navigator === "undefined" || !navigator.geolocation) {
-        if (!options?.silent) {
-          setLocationStatus("当前浏览器不支持定位，您可以手动填写出发地。");
-        }
-        return null;
+        setLocationStatus("褰撳墠娴忚鍣ㄤ笉鏀寔瀹氫綅锛屾偍鍙互鎵嬪姩濉啓鍑哄彂鍦般€?);
+        return;
       }
 
-      const shouldUpdateOriginField =
-        options?.forceUpdateOrigin || options?.updateEmptyOrigin || !form.origin?.trim();
-
-      const cachedOrigin = lastLocatedOriginRef.current;
-
-      const reuseCachedOrigin = cachedOrigin && !options?.forceUpdateOrigin;
-
-      if (reuseCachedOrigin) {
-        const normalizedLabel = cachedOrigin.label ?? `当前位置 (${cachedOrigin.lat.toFixed(4)}, ${cachedOrigin.lng.toFixed(4)})`;
-
-        if (
-          !form.originCoords ||
-          Math.abs(form.originCoords.lat - cachedOrigin.lat) > 1e-6 ||
-          Math.abs(form.originCoords.lng - cachedOrigin.lng) > 1e-6
-        ) {
-          setField("originCoords", { lat: cachedOrigin.lat, lng: cachedOrigin.lng });
-        }
-
-        if (shouldUpdateOriginField && cachedOrigin.label && form.origin?.trim() !== cachedOrigin.label) {
-          setField("origin", cachedOrigin.label);
-        }
-
-        if (!options?.silent) {
-          setLocationStatus(`已定位：${normalizedLabel}`);
-        }
-
-        return {
-          lat: cachedOrigin.lat,
-          lng: cachedOrigin.lng,
-          label: cachedOrigin.label ?? "当前位置",
-          address: cachedOrigin.address ?? cachedOrigin.label ?? normalizedLabel
-        };
-      }
-
-      if (locating && form.originCoords) {
-        return {
-          lat: form.originCoords.lat,
-          lng: form.originCoords.lng,
-          label: form.origin ? `当前位置：${form.origin}` : "当前位置",
-          address: form.origin ?? undefined
-        };
-      }
-
-      if (!options?.silent) {
-        setLocationStatus("正在定位当前出发地...");
-      }
       setLocating(true);
+      setLocationStatus("姝ｅ湪瀹氫綅褰撳墠鍑哄彂鍦?..");
 
-      try {
-        const position = await new Promise<GeolocationPosition>((resolve, reject) => {
-          navigator.geolocation.getCurrentPosition(resolve, reject, {
-            enableHighAccuracy: false,
-            timeout: 1000 * 15,
-            maximumAge: 1000 * 60 * 5
-          });
-        });
+      navigator.geolocation.getCurrentPosition(
+        async (position) => {
+          const { latitude, longitude } = position.coords;
+          const shouldUpdateOrigin = options?.updateEmptyOrigin || !form.origin?.trim();
 
-        const { latitude, longitude } = position.coords;
-
-        let label: string | undefined;
-        let address: string | undefined;
-
-        try {
-          const params = new URLSearchParams({ lat: String(latitude), lng: String(longitude) });
-          const headers: Record<string, string> = {};
-
-          if (accessToken) {
-            headers.Authorization = `Bearer ${accessToken}`;
-          }
-
-          const response = await fetch(`/api/geocode/reverse?${params.toString()}`, {
-            headers: Object.keys(headers).length > 0 ? headers : undefined
-          });
-          const json = await response.json();
-
-          if (response.ok && json.ok) {
-            label = json.data?.label ?? "当前位置";
-            address = json.data?.address ?? label;
-          } else {
-            label = `当前位置 (${latitude.toFixed(4)}, ${longitude.toFixed(4)})`;
-            address = label;
-          }
-        } catch (error) {
-          console.error("Failed to reverse geocode", error);
-          label = `当前位置 (${latitude.toFixed(4)}, ${longitude.toFixed(4)})`;
-          address = label;
-        }
-
-        const resolvedLabel = label ?? "当前位置";
-        const resolvedAddress = address ?? resolvedLabel;
-
-        lastLocatedOriginRef.current = {
-          lat: latitude,
-          lng: longitude,
-          label: resolvedLabel,
-          address: resolvedAddress
-        };
-
-        if (
-          !form.originCoords ||
-          Math.abs(form.originCoords.lat - latitude) > 1e-6 ||
-          Math.abs(form.originCoords.lng - longitude) > 1e-6
-        ) {
           setField("originCoords", { lat: latitude, lng: longitude });
-        }
 
-        if (shouldUpdateOriginField && resolvedLabel && form.origin?.trim() !== resolvedLabel) {
-          setField("origin", resolvedLabel);
-        }
+          try {
+            const params = new URLSearchParams({ lat: String(latitude), lng: String(longitude) });
+            const headers: Record<string, string> = {};
 
-        if (!options?.silent) {
-          setLocationStatus(`已定位：${resolvedLabel}`);
-        }
+            if (accessToken) {
+              headers.Authorization = `Bearer ${accessToken}`;
+            }
 
-        return {
-          lat: latitude,
-          lng: longitude,
-          label: resolvedLabel,
-          address: resolvedAddress
-        };
-      } catch (error) {
-        console.warn("Geolocation failed", error);
+            const response = await fetch(`/api/geocode/reverse?${params.toString()}`, {
+              headers: Object.keys(headers).length > 0 ? headers : undefined
+            });
+            const json = await response.json();
 
-        if (!options?.silent) {
-          const geoError = error as { code?: number } | null | undefined;
-          switch (geoError?.code) {
-            case 1:
-              setLocationStatus("未获得定位权限，请手动填写出发地。");
+            if (response.ok && json.ok) {
+              const label = json.data?.label ?? "褰撳墠浣嶇疆";
+              if (shouldUpdateOrigin) {
+                setField("origin", label);
+              }
+              setLocationStatus(`宸插畾浣嶏細${label}`);
+            } else {
+              const fallbackLabel = `褰撳墠浣嶇疆 (${latitude.toFixed(4)}, ${longitude.toFixed(4)})`;
+              if (shouldUpdateOrigin) {
+                setField("origin", fallbackLabel);
+              }
+              setLocationStatus("瀹氫綅鎴愬姛锛屼絾鏃犳硶璇嗗埆鍩庡競鍚嶇О锛屽彲鎵嬪姩璋冩暣銆?);
+            }
+          } catch (error) {
+            console.error("Failed to reverse geocode", error);
+            const fallbackLabel = `褰撳墠浣嶇疆 (${latitude.toFixed(4)}, ${longitude.toFixed(4)})`;
+            if (shouldUpdateOrigin) {
+              setField("origin", fallbackLabel);
+            }
+            setLocationStatus("瀹氫綅鎴愬姛锛屼絾鍦扮悊鍚嶇О鑾峰彇澶辫触锛屽彲鎵嬪姩璋冩暣銆?);
+          } finally {
+            setLocating(false);
+          }
+        },
+        (error) => {
+          console.warn("Geolocation failed", error);
+          setLocating(false);
+          switch (error.code) {
+            case error.PERMISSION_DENIED:
+              setLocationStatus("鏈幏寰楀畾浣嶆潈闄愶紝璇锋墜鍔ㄥ～鍐欏嚭鍙戝湴銆?);
               break;
-            case 2:
-              setLocationStatus("无法获取位置信息，请检查定位服务。");
+            case error.POSITION_UNAVAILABLE:
+              setLocationStatus("鏃犳硶鑾峰彇浣嶇疆淇℃伅锛岃妫€鏌ュ畾浣嶆湇鍔°€?);
               break;
-            case 3:
-              setLocationStatus("定位超时，请重试或手动填写。");
+            case error.TIMEOUT:
+              setLocationStatus("瀹氫綅瓒呮椂锛岃閲嶈瘯鎴栨墜鍔ㄥ～鍐欍€?);
               break;
             default:
-              setLocationStatus("定位失败，请重试或手动填写出发地。");
+              setLocationStatus("瀹氫綅澶辫触锛岃閲嶈瘯鎴栨墜鍔ㄥ～鍐欏嚭鍙戝湴銆?);
           }
-        }
-
-        return null;
-      } finally {
-        setLocating(false);
-      }
+        },
+        { enableHighAccuracy: false, timeout: 1000 * 15, maximumAge: 1000 * 60 * 5 }
+      );
     },
-    [
-      locating,
-      form.origin,
-      form.originCoords,
-      setField,
-      setLocationStatus,
-      accessToken
-    ]
+    [form.origin, locating, setField, setLocationStatus, accessToken]
   );
-
-  const handleNavigationOriginChange = useCallback(
-    (option: NavigationOriginOption) => {
-      setNavigationOriginOption(option);
-
-      if (option === "current-location") {
-        void detectCurrentOrigin({ updateEmptyOrigin: true });
-      }
-    },
-    [detectCurrentOrigin]
-  );
-
 
   const clearPrimaryFormFields = useCallback(() => {
     setForm({
@@ -603,7 +494,7 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
     const trimmed = smartInput.trim();
 
     if (!trimmed) {
-      setSmartInputMessage("请输入自然语言描述，例如：我们三个人带了1万块钱想去西安玩5 天，喜欢美食和户外活动。");
+      setSmartInputMessage("璇疯緭鍏ヨ嚜鐒惰瑷€鎻忚堪锛屼緥濡傦細鎴戜滑涓変釜浜哄甫浜?涓囧潡閽辨兂鍘昏タ瀹夌帺5 澶╋紝鍠滄缇庨鍜屾埛澶栨椿鍔ㄣ€?);
       return;
     }
 
@@ -649,7 +540,7 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
     hasTriedLocateRef.current = true;
 
     if (form.origin && form.origin.trim().length > 0) {
-      setLocationStatus(`出发地：${form.origin}`);
+      setLocationStatus(`鍑哄彂鍦帮細${form.origin}`);
       return;
     }
 
@@ -660,7 +551,7 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
     event.preventDefault();
 
     if (!form.destination.trim()) {
-      setError("目的地不能为空。");
+      setError("鐩殑鍦颁笉鑳戒负绌恒€?);
       return;
     }
 
@@ -694,18 +585,18 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
       });
 
       if (response.status >= 500) {
-        window.alert("生成失败，请重试。");
+        window.alert("鐢熸垚澶辫触锛岃閲嶈瘯銆?);
       }
 
       const json = await response.json();
 
       if (!response.ok || !json.ok) {
-        throw new Error(json?.error ?? "生成行程失败，请稍后再试。");
+        throw new Error(json?.error ?? "鐢熸垚琛岀▼澶辫触锛岃绋嶅悗鍐嶈瘯銆?);
       }
 
       setResult(json.data);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "生成行程失败，请检查网络后重试。";
+      const message = error instanceof Error ? error.message : "鐢熸垚琛岀▼澶辫触锛岃妫€鏌ョ綉缁滃悗閲嶈瘯銆?;
       setError(message);
     } finally {
       setLoading(false);
@@ -734,12 +625,12 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
       const json = await response.json();
 
       if (!response.ok || !json.ok) {
-        throw new Error(json?.error ?? "获取云端行程失败，请稍后再试。");
+        throw new Error(json?.error ?? "鑾峰彇浜戠琛岀▼澶辫触锛岃绋嶅悗鍐嶈瘯銆?);
       }
 
       setPlans(json.data?.items ?? []);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "获取云端行程失败，请稍后再试。";
+      const message = error instanceof Error ? error.message : "鑾峰彇浜戠琛岀▼澶辫触锛岃绋嶅悗鍐嶈瘯銆?;
       setPlansError(message);
     } finally {
       setLoadingPlans(false);
@@ -754,16 +645,16 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
 
   const handleSavePlan = useCallback(async () => {
     if (!accessToken) {
-      window.alert("请先登录后再保存行程。");
+      window.alert("璇峰厛鐧诲綍鍚庡啀淇濆瓨琛岀▼銆?);
       return;
     }
 
     if (!result) {
-      window.alert("生成行程后才能保存。");
+      window.alert("鐢熸垚琛岀▼鍚庢墠鑳戒繚瀛樸€?);
       return;
     }
 
-    const title = planTitle.trim() || `${form.destination || "未命名目的地"} 行程`;
+    const title = planTitle.trim() || `${form.destination || "鏈懡鍚嶇洰鐨勫湴"} 琛岀▼`;
     const payload = {
       title,
       summary: planSummary.trim() || undefined,
@@ -797,18 +688,18 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
       const json = await response.json();
 
       if (!response.ok || !json.ok) {
-        throw new Error(json?.error ?? "保存行程失败，请稍后再试。");
+        throw new Error(json?.error ?? "淇濆瓨琛岀▼澶辫触锛岃绋嶅悗鍐嶈瘯銆?);
       }
 
       const data = json.data as PlanSummary;
       setActivePlanId(data.id);
       setPlanTitle(data.title ?? title);
       setPlanSummary(data.summary ?? "");
-      window.alert(activePlanId ? "行程已更新。" : "行程已保存到云端。");
+      window.alert(activePlanId ? "琛岀▼宸叉洿鏂般€? : "琛岀▼宸蹭繚瀛樺埌浜戠銆?);
       setShowPlans(true);
       void fetchPlans();
     } catch (error) {
-      const message = error instanceof Error ? error.message : "保存行程失败，请稍后再试。";
+      const message = error instanceof Error ? error.message : "淇濆瓨琛岀▼澶辫触锛岃绋嶅悗鍐嶈瘯銆?;
       window.alert(message);
     } finally {
       setSavingPlan(false);
@@ -834,7 +725,7 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
         const json = await response.json();
 
         if (!response.ok || !json.ok) {
-          throw new Error(json?.error ?? "加载行程失败，请稍后再试。");
+          throw new Error(json?.error ?? "鍔犺浇琛岀▼澶辫触锛岃绋嶅悗鍐嶈瘯銆?);
         }
 
         const data = json.data as {
@@ -849,10 +740,10 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
         setActivePlanId(data.id);
         setPlanTitle(data.title ?? "");
         setPlanSummary(data.summary ?? "");
-        window.alert("已加载云端行程。");
+        window.alert("宸插姞杞戒簯绔绋嬨€?);
         setShowPlans(false);
       } catch (error) {
-        const message = error instanceof Error ? error.message : "加载行程失败，请稍后再试。";
+        const message = error instanceof Error ? error.message : "鍔犺浇琛岀▼澶辫触锛岃绋嶅悗鍐嶈瘯銆?;
         setPlansError(message);
       } finally {
         setLoadingPlans(false);
@@ -864,11 +755,11 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
   const handleDeletePlan = useCallback(
     async (planId: string) => {
       if (!accessToken) {
-        window.alert("请先登录后再删除行程。");
+        window.alert("璇峰厛鐧诲綍鍚庡啀鍒犻櫎琛岀▼銆?);
         return;
       }
 
-      if (typeof window !== "undefined" && !window.confirm("确定要删除这个云端行程吗？删除后无法恢复。")) {
+      if (typeof window !== "undefined" && !window.confirm("纭畾瑕佸垹闄よ繖涓簯绔绋嬪悧锛熷垹闄ゅ悗鏃犳硶鎭㈠銆?)) {
         return;
       }
 
@@ -884,7 +775,7 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
         const json = await response.json();
 
         if (!response.ok || !json.ok) {
-          throw new Error(json?.error ?? "删除行程失败，请稍后再试。");
+          throw new Error(json?.error ?? "鍒犻櫎琛岀▼澶辫触锛岃绋嶅悗鍐嶈瘯銆?);
         }
 
         setPlans((current) => current.filter((plan) => plan.id !== planId));
@@ -895,10 +786,10 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
           setPlanSummary("");
         }
 
-        window.alert("云端行程已删除。");
+        window.alert("浜戠琛岀▼宸插垹闄ゃ€?);
         void fetchPlans();
       } catch (error) {
-        const message = error instanceof Error ? error.message : "删除行程失败，请稍后再试。";
+        const message = error instanceof Error ? error.message : "鍒犻櫎琛岀▼澶辫触锛岃绋嶅悗鍐嶈瘯銆?;
         window.alert(message);
         setPlansError(message);
       }
@@ -977,29 +868,7 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
   ) : null;
 
   const resolveNavigationOrigin = useCallback(
-    async (dayIndex: number, activityIndex: number) => {
-      if (navigationOriginOption === "current-location") {
-        const current = await detectCurrentOrigin({ silent: true });
-        return current ?? null;
-      }
-
-      if (navigationOriginOption === "custom") {
-        const lat = Number.parseFloat(navigationCustomOrigin.lat);
-        const lng = Number.parseFloat(navigationCustomOrigin.lng);
-
-        if (Number.isFinite(lat) && Number.isFinite(lng)) {
-          return {
-            lat,
-            lng,
-            label: navigationCustomOrigin.label?.trim() || "自定义起点",
-            address: navigationCustomOrigin.label?.trim() || undefined
-          };
-        }
-
-        setNavigationStatus("自定义起点坐标无效，请输入有效的经纬度。");
-        return null;
-      }
-
+    (dayIndex: number, activityIndex: number) => {
       if (!result) {
         return null;
       }
@@ -1032,24 +901,14 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
         return {
           lat: form.originCoords.lat,
           lng: form.originCoords.lng,
-          label: form.origin ? `出发地：${form.origin}` : "出发地",
+          label: form.origin ? `鍑哄彂鍦帮細${form.origin}` : "鍑哄彂鍦?,
           address: form.origin ?? undefined
         };
       }
 
       return null;
     },
-    [
-      navigationOriginOption,
-      detectCurrentOrigin,
-      navigationCustomOrigin.lat,
-      navigationCustomOrigin.lng,
-      navigationCustomOrigin.label,
-      result,
-      form.originCoords,
-      form.origin,
-      setNavigationStatus
-    ]
+    [result, form.originCoords, form.origin]
   );
 
   const lastSuccessfulNavigationRef = useRef<{ dayIndex: number; activityIndex: number } | null>(null);
@@ -1061,7 +920,7 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
       options?: { reuseExistingRequestId?: number }
     ) => {
       if (!result) {
-        setNavigationStatus("请先生成行程，再尝试导航。");
+        setNavigationStatus("璇峰厛鐢熸垚琛岀▼锛屽啀灏濊瘯瀵艰埅銆?);
         return;
       }
 
@@ -1069,26 +928,26 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
       const activity = day?.activities?.[activityIndex];
 
       if (!activity) {
-        setNavigationStatus("未找到对应的活动。");
+        setNavigationStatus("鏈壘鍒板搴旂殑娲诲姩銆?);
         return;
       }
 
       if (typeof activity.lat !== "number" || typeof activity.lng !== "number") {
-        setNavigationStatus("该活动缺少地理坐标，无法发起导航。");
+        setNavigationStatus("璇ユ椿鍔ㄧ己灏戝湴鐞嗗潗鏍囷紝鏃犳硶鍙戣捣瀵艰埅銆?);
         return;
       }
 
-      const origin = await resolveNavigationOrigin(dayIndex, activityIndex);
+      const origin = resolveNavigationOrigin(dayIndex, activityIndex);
 
       if (!origin) {
-        setNavigationStatus("无法确定起点，请先填写出发地或为前一活动提供坐标。");
+        setNavigationStatus("鏃犳硶纭畾璧风偣锛岃鍏堝～鍐欏嚭鍙戝湴鎴栦负鍓嶄竴娲诲姩鎻愪緵鍧愭爣銆?);
         return;
       }
 
       const requestId = options?.reuseExistingRequestId ?? latestNavigationAttemptRef.current + 1;
       latestNavigationAttemptRef.current = requestId;
       setNavigationLoading(true);
-  setNavigationStatus(`正在请求高德路线（${navigationModeLabel} · 起点：${navigationOriginLabel}）...`);
+      setNavigationStatus(`姝ｅ湪璇锋眰楂樺痉璺嚎锛?{navigationModeLabel}锛?..`);
 
       const headers: Record<string, string> = {
         "Content-Type": "application/json"
@@ -1123,7 +982,7 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
         const json = await response.json();
 
         if (!response.ok || !json?.ok) {
-          const errorMessage = json?.error ?? "路线请求失败，请稍后再试。";
+          const errorMessage = json?.error ?? "璺嚎璇锋眰澶辫触锛岃绋嶅悗鍐嶈瘯銆?;
           throw new Error(errorMessage);
         }
 
@@ -1162,17 +1021,17 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
 
         setIsMapVisible(true);
         setNavigationStatus(
-          `路线已更新（${resolvedModeLabel} · 起点：${navigationOriginLabel}）：约 ${formatDistance(
-            data.distanceMeters
-          )}，预计耗时 ${formatDuration(data.durationSeconds)}。`
+          `璺嚎宸叉洿鏂帮紙${resolvedModeLabel}锛夛細绾?${formatDistance(data.distanceMeters)}锛岄璁¤€楁椂 ${formatDuration(
+            data.durationSeconds
+          )}銆俙
         );
       } catch (error) {
         if (latestNavigationAttemptRef.current !== requestId) {
           return;
         }
 
-        const message = error instanceof Error ? error.message : "路线请求失败，请稍后再试。";
-  setNavigationStatus(`${message}（${navigationModeLabel} · 起点：${navigationOriginLabel}）`);
+        const message = error instanceof Error ? error.message : "璺嚎璇锋眰澶辫触锛岃绋嶅悗鍐嶈瘯銆?;
+        setNavigationStatus(`${message}锛?{navigationModeLabel}锛塦);
       } finally {
         if (latestNavigationAttemptRef.current === requestId) {
           setNavigationLoading(false);
@@ -1187,8 +1046,7 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
       setIsMapVisible,
       accessToken,
       navigationMode,
-      navigationModeLabel,
-      navigationOriginLabel
+      navigationModeLabel
     ]
   );
 
@@ -1206,7 +1064,7 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
   const handleClearRoute = useCallback(() => {
     clearRoute();
     lastSuccessfulNavigationRef.current = null;
-    setNavigationStatus("已移除导航路线。");
+    setNavigationStatus("宸茬Щ闄ゅ鑸矾绾裤€?);
     setNavigationLoading(false);
   }, [clearRoute]);
 
@@ -1216,10 +1074,9 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
         <span className="inline-flex items-center gap-2 rounded-full border border-slate-700/80 bg-slate-900/80 px-4 py-1 text-xs uppercase tracking-[0.3em] text-slate-300">
           AI Powered
         </span>
-        <h1 className="text-4xl font-semibold text-white md:text-5xl">行程规划助手</h1>
+        <h1 className="text-4xl font-semibold text-white md:text-5xl">琛岀▼瑙勫垝鍔╂墜</h1>
         <p className="max-w-2xl text-slate-300">
-          输入目的地、行程偏好与预算，AI 将生成每日行程安排。也可以使用语音补充灵感，随后你可以在交互地图与时间线上探索每个地点。
-        </p>
+          杈撳叆鐩殑鍦般€佽绋嬪亸濂戒笌棰勭畻锛孉I 灏嗙敓鎴愭瘡鏃ヨ绋嬪畨鎺掋€備篃鍙互浣跨敤璇煶琛ュ厖鐏垫劅锛岄殢鍚庝綘鍙互鍦ㄤ氦浜掑湴鍥句笌鏃堕棿绾夸笂鎺㈢储姣忎釜鍦扮偣銆?        </p>
       </header>
 
       <form
@@ -1228,8 +1085,8 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
       >
         <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-2 rounded-xl border border-slate-800 bg-slate-950/70 p-4">
-            <span className="text-sm font-medium text-slate-200">快捷输入（语音 / 文字）</span>
-            <p className="text-xs text-slate-400">描述旅行需求，系统会自动填充目的地、天数、预算、同行人数与偏好。</p>
+            <span className="text-sm font-medium text-slate-200">蹇嵎杈撳叆锛堣闊?/ 鏂囧瓧锛?/span>
+            <p className="text-xs text-slate-400">鎻忚堪鏃呰闇€姹傦紝绯荤粺浼氳嚜鍔ㄥ～鍏呯洰鐨勫湴銆佸ぉ鏁般€侀绠椼€佸悓琛屼汉鏁颁笌鍋忓ソ銆?/p>
             <textarea
               value={smartInput}
               onChange={(event) => {
@@ -1237,7 +1094,7 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
                 setSmartInputMessage(null);
               }}
               className="h-24 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 focus:border-blue-500 focus:outline-none"
-              placeholder="例如：我们4个人带了1万块钱想去上海玩4天, 我们喜欢美食和户外活动"
+              placeholder="渚嬪锛氭垜浠?涓汉甯︿簡1涓囧潡閽辨兂鍘讳笂娴风帺4澶? 鎴戜滑鍠滄缇庨鍜屾埛澶栨椿鍔?
             />
             <div className="flex flex-col gap-2">
               <div className="flex flex-wrap gap-2">
@@ -1247,7 +1104,7 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
                   className="rounded-lg bg-slate-800 px-4 py-2 text-sm text-white transition hover:bg-slate-700 disabled:opacity-60"
                   disabled={parsing}
                 >
-                  {parsing ? "解析中..." : "解析文字描述"}
+                  {parsing ? "瑙ｆ瀽涓?.." : "瑙ｆ瀽鏂囧瓧鎻忚堪"}
                 </button>
                 <VoiceRecorder onText={handleVoiceText} onBeforeStart={clearPrimaryFormFields} />
               </div>
@@ -1261,7 +1118,7 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
           </div>
 
           <label className="flex flex-col gap-2">
-            <span className="text-sm font-medium text-slate-200">出发地</span>
+            <span className="text-sm font-medium text-slate-200">鍑哄彂鍦?/span>
             <div className="flex flex-wrap gap-2">
               <input
                 type="text"
@@ -1269,7 +1126,7 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
                 onChange={(event) => {
                   const value = event.target.value;
                   setField("origin", value);
-                  setLocationStatus(value.trim().length > 0 ? `出发地：${value.trim()}` : "您可以定位或填写出发地");
+                  setLocationStatus(value.trim().length > 0 ? `鍑哄彂鍦帮細${value.trim()}` : "鎮ㄥ彲浠ュ畾浣嶆垨濉啓鍑哄彂鍦?);
                 }}
                 onBlur={(event) => {
                   if (!event.target.value.trim()) {
@@ -1277,7 +1134,7 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
                   }
                 }}
                 className="flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 focus:border-blue-500 focus:outline-none"
-                placeholder="定位或手动填写出发地"
+                placeholder="瀹氫綅鎴栨墜鍔ㄥ～鍐欏嚭鍙戝湴"
               />
               <button
                 type="button"
@@ -1287,26 +1144,26 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
                 className="rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-200 transition hover:border-blue-500 hover:text-blue-300"
                 disabled={locating}
               >
-                {locating ? "定位中..." : "重新定位"}
+                {locating ? "瀹氫綅涓?.." : "閲嶆柊瀹氫綅"}
               </button>
             </div>
             {locationStatus && <p className="text-xs text-slate-400">{locationStatus}</p>}
           </label>
 
           <label className="flex flex-col gap-2">
-            <span className="text-sm font-medium text-slate-200">目的地</span>
+            <span className="text-sm font-medium text-slate-200">鐩殑鍦?/span>
             <input
               type="text"
               value={form.destination}
               onChange={(event) => setField("destination", event.target.value)}
               className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 focus:border-blue-500 focus:outline-none"
-              placeholder="例如：上海"
+              placeholder="渚嬪锛氫笂娴?
               required
             />
           </label>
 
           <label className="flex flex-col gap-2">
-            <span className="text-sm font-medium text-slate-200">行程天数</span>
+            <span className="text-sm font-medium text-slate-200">琛岀▼澶╂暟</span>
             <input
               type="number"
               min={1}
@@ -1317,7 +1174,7 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
           </label>
 
           <label className="flex flex-col gap-2">
-            <span className="text-sm font-medium text-slate-200">预算（元）</span>
+            <span className="text-sm font-medium text-slate-200">棰勭畻锛堝厓锛?/span>
             <input
               type="number"
               min={0}
@@ -1326,12 +1183,12 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
                 setField("budget", event.target.value ? Math.max(0, Number(event.target.value)) : undefined)
               }
               className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 focus:border-blue-500 focus:outline-none"
-              placeholder="可选"
+              placeholder="鍙€?
             />
           </label>
 
           <label className="flex flex-col gap-2">
-            <span className="text-sm font-medium text-slate-200">同行人数</span>
+            <span className="text-sm font-medium text-slate-200">鍚岃浜烘暟</span>
             <input
               type="number"
               min={1}
@@ -1340,12 +1197,12 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
                 setField("partySize", event.target.value ? Math.max(1, Number(event.target.value)) : undefined)
               }
               className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 focus:border-blue-500 focus:outline-none"
-              placeholder="可选"
+              placeholder="鍙€?
             />
           </label>
 
           <div className="flex flex-col gap-2">
-            <span className="text-sm font-medium text-slate-200">偏好标签</span>
+            <span className="text-sm font-medium text-slate-200">鍋忓ソ鏍囩</span>
             <div className="flex flex-wrap gap-2">
               {preferenceOptions.map((option) => (
                 <label key={option} className="inline-flex items-center gap-2 rounded-full border border-slate-700 px-3 py-1 text-sm">
@@ -1361,7 +1218,7 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
             </div>
             {form.preferences.length > 0 && (
               <div className="text-xs text-slate-400">
-                已选择：{form.preferences.join("、")}
+                宸查€夋嫨锛歿form.preferences.join("銆?)}
               </div>
             )}
           </div>
@@ -1374,41 +1231,41 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
             className="rounded-xl bg-gradient-to-r from-blue-600 via-indigo-500 to-purple-500 px-6 py-3 text-white shadow-lg transition hover:brightness-110 disabled:opacity-60"
             disabled={loading}
           >
-            {loading ? "生成中..." : "生成行程"}
+            {loading ? "鐢熸垚涓?.." : "鐢熸垚琛岀▼"}
           </button>
 
           <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-4 text-sm text-slate-300">
-            <h3 className="mb-2 text-base font-semibold text-white">云端行程</h3>
+            <h3 className="mb-2 text-base font-semibold text-white">浜戠琛岀▼</h3>
             <div className="flex flex-col gap-2">
               {activePlanId && (
                 <div className="flex items-center justify-between rounded-lg border border-blue-500/40 bg-blue-500/10 px-3 py-2 text-xs text-blue-200">
-                  <span>当前编辑云端行程</span>
+                  <span>褰撳墠缂栬緫浜戠琛岀▼</span>
                   <button
                     type="button"
                     className="rounded border border-blue-400 px-2 py-1 text-[11px] text-blue-100 transition hover:bg-blue-500/20"
                     onClick={() => setActivePlanId(null)}
                   >
-                    另存为新行程
+                    鍙﹀瓨涓烘柊琛岀▼
                   </button>
                 </div>
               )}
               <label className="flex flex-col gap-1">
-                <span className="text-xs text-slate-400">行程标题</span>
+                <span className="text-xs text-slate-400">琛岀▼鏍囬</span>
                 <input
                   type="text"
                   value={planTitle}
                   onChange={(event) => setPlanTitle(event.target.value)}
                   className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 focus:border-blue-500 focus:outline-none"
-                  placeholder="例如：上海5日游"
+                  placeholder="渚嬪锛氫笂娴?鏃ユ父"
                 />
               </label>
               <label className="flex flex-col gap-1">
-                <span className="text-xs text-slate-400">摘要备注（可选）</span>
+                <span className="text-xs text-slate-400">鎽樿澶囨敞锛堝彲閫夛級</span>
                 <textarea
                   value={planSummary}
                   onChange={(event) => setPlanSummary(event.target.value)}
                   className="h-20 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 focus:border-blue-500 focus:outline-none"
-                  placeholder="简要描述这个行程的亮点或注意事项"
+                  placeholder="绠€瑕佹弿杩拌繖涓绋嬬殑浜偣鎴栨敞鎰忎簨椤?
                 />
               </label>
               <div className="flex flex-wrap gap-2">
@@ -1420,28 +1277,28 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
                 >
                   {savingPlan
                     ? activePlanId
-                      ? "更新中..."
-                      : "保存中..."
+                      ? "鏇存柊涓?.."
+                      : "淇濆瓨涓?.."
                     : activePlanId
-                      ? "更新云端行程"
-                      : "保存到云端"}
+                      ? "鏇存柊浜戠琛岀▼"
+                      : "淇濆瓨鍒颁簯绔?}
                 </button>
                 <button
                   type="button"
                   onClick={() => setShowPlans((prev) => !prev)}
                   className="rounded-lg border border-slate-700 px-4 py-2 text-slate-200 transition hover:border-blue-500 hover:text-blue-300"
                 >
-                  {showPlans ? "收起云端行程" : "查看云端行程"}
+                  {showPlans ? "鏀惰捣浜戠琛岀▼" : "鏌ョ湅浜戠琛岀▼"}
                 </button>
               </div>
               {showPlans && (
                 <div className="max-h-64 overflow-y-auto rounded-lg border border-slate-800 bg-slate-950/60 p-3">
                   {loadingPlans ? (
-                    <p className="text-xs text-slate-400">正在加载...</p>
+                    <p className="text-xs text-slate-400">姝ｅ湪鍔犺浇...</p>
                   ) : plansError ? (
                     <p className="text-xs text-red-400">{plansError}</p>
                   ) : plans.length === 0 ? (
-                    <p className="text-xs text-slate-400">尚未保存行程。</p>
+                    <p className="text-xs text-slate-400">灏氭湭淇濆瓨琛岀▼銆?/p>
                   ) : (
                     <ul className="flex flex-col gap-2 text-xs">
                       {plans.map((plan) => {
@@ -1467,7 +1324,7 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
                                 </p>
                               )}
                               <p className="mt-1 text-[11px] text-slate-500">
-                                更新于 {new Date(plan.updatedAt).toLocaleString()}
+                                鏇存柊浜?{new Date(plan.updatedAt).toLocaleString()}
                               </p>
                             </div>
                             <div className="flex flex-col gap-1">
@@ -1476,14 +1333,14 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
                                 onClick={() => handleLoadPlan(plan.id)}
                                 className="rounded border border-blue-500 px-2 py-1 text-[11px] text-blue-300 transition hover:bg-blue-500/10"
                               >
-                                加载
+                                鍔犺浇
                               </button>
                               <button
                                 type="button"
                                 onClick={() => handleDeletePlan(plan.id)}
                                 className="rounded border border-red-500 px-2 py-1 text-[11px] text-red-300 transition hover:bg-red-500/10"
                               >
-                                删除
+                                鍒犻櫎
                               </button>
                             </div>
                           </div>
@@ -1503,28 +1360,28 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
             <div className="space-y-3 text-sm text-slate-300">
               {form.origin && (
                 <div>
-                  <span className="font-semibold text-white">出发地：</span>
+                  <span className="font-semibold text-white">鍑哄彂鍦帮細</span>
                   {form.origin}
                 </div>
               )}
               <div>
-                <span className="font-semibold text-white">目的地：</span>
-                {result.destination}（共 {result.days} 天）
+                <span className="font-semibold text-white">鐩殑鍦帮細</span>
+                {result.destination}锛堝叡 {result.days} 澶╋級
               </div>
               {typeof result.budget_estimate === "number" && (
                 <div>
-                  <span className="font-semibold text-white">预算估计：</span>¥{result.budget_estimate.toFixed(0)}
+                  <span className="font-semibold text-white">棰勭畻浼拌锛?/span>楼{result.budget_estimate.toFixed(0)}
                 </div>
               )}
               {result.preference_tags.length > 0 && (
                 <div>
-                  <span className="font-semibold text-white">偏好标签：</span>
-                  {result.preference_tags.join("、")}
+                  <span className="font-semibold text-white">鍋忓ソ鏍囩锛?/span>
+                  {result.preference_tags.join("銆?)}
                 </div>
               )}
             </div>
           ) : (
-            <p className="text-sm text-slate-400">提交后将在此展示摘要。</p>
+            <p className="text-sm text-slate-400">鎻愪氦鍚庡皢鍦ㄦ灞曠ず鎽樿銆?/p>
           )}
         </div>
       </form>
@@ -1536,16 +1393,16 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
           className="space-y-4 rounded-3xl border border-slate-800 bg-slate-900/80 p-4 shadow-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
         >
           <header className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-xl font-semibold text-white">互动地图</h2>
+            <h2 className="text-xl font-semibold text-white">浜掑姩鍦板浘</h2>
             <div className="flex items-center gap-2 text-xs text-slate-400">
-              <span>拖动缩放以查看每日地点</span>
+              <span>鎷栧姩缂╂斁浠ユ煡鐪嬫瘡鏃ュ湴鐐?/span>
               <button
                 type="button"
                 onClick={handleScrollToLastActivity}
                 className="rounded border border-slate-700 bg-slate-900 px-2 py-1 text-[11px] text-slate-200 transition hover:border-blue-500 hover:text-blue-300 disabled:cursor-not-allowed disabled:border-slate-800 disabled:text-slate-500"
                 disabled={!lastActivityElementId}
               >
-                返回活动详情
+                杩斿洖娲诲姩璇︽儏
               </button>
               {hasMarkerHistory && (
                 <button
@@ -1553,13 +1410,12 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
                   onClick={handleReturnToPrevious}
                   className="rounded border border-slate-700 bg-slate-900 px-2 py-1 text-[11px] text-slate-200 transition hover:border-blue-500 hover:text-blue-300"
                 >
-                  返回上一个地点
-                </button>
+                  杩斿洖涓婁竴涓湴鐐?                </button>
               )}
             </div>
           </header>
           <div className="flex flex-wrap items-center gap-2 text-xs text-slate-300">
-            <span className="text-slate-400">导航方式：</span>
+            <span className="text-slate-400">瀵艰埅鏂瑰紡锛?/span>
             {NAVIGATION_MODE_SEQUENCE.map((mode) => {
               const label = NAVIGATION_MODE_LABELS[mode];
               const isActive = navigationMode === mode;
@@ -1579,79 +1435,6 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
               );
             })}
           </div>
-          <div className="flex flex-col gap-2 rounded-2xl border border-slate-800 bg-slate-950/60 p-3 text-xs text-slate-300">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-slate-400">导航起点：</span>
-              {(
-                [
-                  "previous-activity",
-                  "current-location",
-                  "custom"
-                ] as NavigationOriginOption[]
-              ).map((option) => {
-                const label = NAVIGATION_ORIGIN_LABELS[option];
-                const isActive = navigationOriginOption === option;
-                return (
-                  <button
-                    key={option}
-                    type="button"
-                    onClick={() => handleNavigationOriginChange(option)}
-                    className={`rounded-full border px-3 py-1 transition ${
-                      isActive
-                        ? "border-emerald-400 bg-emerald-500/20 text-emerald-100"
-                        : "border-slate-700 bg-slate-900 text-slate-300 hover:border-emerald-400 hover:text-emerald-100"
-                    }`}
-                  >
-                    {label}
-                  </button>
-                );
-              })}
-            </div>
-            {navigationOriginOption === "current-location" && (
-              <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
-                <span>将使用当前位置作为起点。</span>
-                <button
-                  type="button"
-                  onClick={() => void detectCurrentOrigin({ forceUpdateOrigin: true })}
-                  className="rounded border border-emerald-500/60 px-2 py-1 text-emerald-200 transition hover:border-emerald-400 hover:text-emerald-100"
-                  disabled={locating}
-                >
-                  {locating ? "定位中..." : "重新定位"}
-                </button>
-              </div>
-            )}
-            {navigationOriginOption === "custom" && (
-              <div className="flex flex-col gap-2 text-[11px] text-slate-400">
-                <div className="flex flex-wrap gap-2">
-                  <input
-                    type="text"
-                    value={navigationCustomOrigin.lat}
-                    onChange={(event) => setNavigationCustomOrigin((prev) => ({ ...prev, lat: event.target.value }))}
-                    className="w-32 rounded border border-slate-700 bg-slate-900 px-2 py-1 text-slate-100 focus:border-emerald-500 focus:outline-none"
-                    placeholder="纬度"
-                  />
-                  <input
-                    type="text"
-                    value={navigationCustomOrigin.lng}
-                    onChange={(event) => setNavigationCustomOrigin((prev) => ({ ...prev, lng: event.target.value }))}
-                    className="w-32 rounded border border-slate-700 bg-slate-900 px-2 py-1 text-slate-100 focus:border-emerald-500 focus:outline-none"
-                    placeholder="经度"
-                  />
-                  <input
-                    type="text"
-                    value={navigationCustomOrigin.label}
-                    onChange={(event) => setNavigationCustomOrigin((prev) => ({ ...prev, label: event.target.value }))}
-                    className="flex-1 min-w-[140px] rounded border border-slate-700 bg-slate-900 px-2 py-1 text-slate-100 focus:border-emerald-500 focus:outline-none"
-                    placeholder="备注名称（可选）"
-                  />
-                </div>
-                <p>请填写有效的经纬度，例如：纬度 31.2304，经度 121.4737。</p>
-              </div>
-            )}
-            {navigationOriginOption === "previous-activity" && (
-              <p className="text-[11px] text-slate-400">默认以上一活动或行程起点作为导航起点。</p>
-            )}
-          </div>
           <div className="relative h-80">
             <MapView
               markers={markers}
@@ -1662,20 +1445,19 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
           {navigationStatus && (
             <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-3 text-xs text-slate-300">
               {navigationStatus}
-              {navigationLoading && <span className="ml-2 text-slate-400">(加载中)</span>}
+              {navigationLoading && <span className="ml-2 text-slate-400">(鍔犺浇涓?</span>}
             </div>
           )}
           {activeRoute && (
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-cyan-500/40 bg-cyan-500/10 p-3 text-sm text-cyan-100">
               <div className="space-y-1">
                 <p>
-                  导航路线：
-                  {activeRoute.origin?.label ?? "起点"}
-                  <span className="mx-1 text-cyan-300">→</span>
-                  {activeRoute.destination?.label ?? "终点"}
+                  瀵艰埅璺嚎锛?                  {activeRoute.origin?.label ?? "璧风偣"}
+                  <span className="mx-1 text-cyan-300">鈫?/span>
+                  {activeRoute.destination?.label ?? "缁堢偣"}
                 </p>
                 <p className="text-cyan-200">
-                  距离约 {formatDistance(activeRoute.distanceMeters)} · 预计耗时 {formatDuration(activeRoute.durationSeconds)}
+                  璺濈绾?{formatDistance(activeRoute.distanceMeters)} 路 棰勮鑰楁椂 {formatDuration(activeRoute.durationSeconds)}
                 </p>
               </div>
               <button
@@ -1683,14 +1465,14 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
                 onClick={handleClearRoute}
                 className="rounded border border-cyan-400/80 bg-cyan-500/10 px-3 py-1 text-xs text-cyan-100 transition hover:bg-cyan-500/20"
               >
-                清除路线
+                娓呴櫎璺嚎
               </button>
             </div>
           )}
           {markers.length === 0 && (
             <div className="rounded-2xl border border-dashed border-slate-700/80 bg-slate-950/60 p-4 text-center text-sm text-slate-400">
-              <p className="text-base font-medium text-slate-300">填写表单并生成行程后，将基于每日活动自动打点。</p>
-              <p>当前展示的是底图，你仍然可以拖动或缩放查看城市概览。</p>
+              <p className="text-base font-medium text-slate-300">濉啓琛ㄥ崟骞剁敓鎴愯绋嬪悗锛屽皢鍩轰簬姣忔棩娲诲姩鑷姩鎵撶偣銆?/p>
+              <p>褰撳墠灞曠ず鐨勬槸搴曞浘锛屼綘浠嶇劧鍙互鎷栧姩鎴栫缉鏀炬煡鐪嬪煄甯傛瑙堛€?/p>
             </div>
           )}
         </div>
@@ -1698,8 +1480,8 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
         <div className="space-y-4">
           <div className="rounded-3xl border border-slate-800 bg-slate-900/80 p-4 shadow-xl">
             <header className="mb-3 flex items-center justify-between">
-              <h2 className="text-xl font-semibold text-white">日程时间线</h2>
-              <span className="text-xs text-slate-400">按天查看详细安排</span>
+              <h2 className="text-xl font-semibold text-white">鏃ョ▼鏃堕棿绾?/h2>
+              <span className="text-xs text-slate-400">鎸夊ぉ鏌ョ湅璇︾粏瀹夋帓</span>
             </header>
             <ItineraryTimeline
               itinerary={result}
