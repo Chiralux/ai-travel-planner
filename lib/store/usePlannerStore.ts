@@ -21,6 +21,14 @@ type FocusableMarker = {
   address?: string;
 };
 
+export type PlannerRoute = {
+  points: Array<{ lat: number; lng: number }>;
+  distanceMeters: number;
+  durationSeconds: number;
+  origin?: FocusableMarker;
+  destination?: FocusableMarker;
+};
+
 type PlannerState = {
   form: PlannerForm;
   result: Itinerary | null;
@@ -28,6 +36,7 @@ type PlannerState = {
   error: string | null;
   focusedMarker: FocusableMarker | null;
   focusHistory: FocusableMarker[];
+  activeRoute: PlannerRoute | null;
   setField: <K extends keyof PlannerForm>(key: K, value: PlannerForm[K]) => void;
   togglePreference: (value: string) => void;
   setLoading: (loading: boolean) => void;
@@ -38,6 +47,8 @@ type PlannerState = {
   setForm: (form: PlannerForm) => void;
   hydrateFromPlan: (payload: { form: PlannerForm; itinerary: Itinerary }) => void;
   updateActivity: (dayIndex: number, activityIndex: number, updates: Partial<Activity>) => void;
+  setRoute: (route: PlannerRoute | null) => void;
+  clearRoute: () => void;
   reset: () => void;
 };
 
@@ -79,6 +90,7 @@ export const usePlannerStore = create<PlannerState>((set) => ({
   error: null,
   focusedMarker: null,
   focusHistory: [],
+  activeRoute: null,
   setField: (key, value) =>
     set((state) => ({
       form: {
@@ -102,7 +114,8 @@ export const usePlannerStore = create<PlannerState>((set) => ({
     }),
   setLoading: (loading) => set({ loading }),
   setError: (error) => set({ error }),
-  setResult: (itinerary) => set({ result: itinerary, focusedMarker: null, focusHistory: [] }),
+  setResult: (itinerary) =>
+    set({ result: itinerary, focusedMarker: null, focusHistory: [], activeRoute: null }),
   setFocusedMarker: (marker) =>
     set((state) => {
       if (!marker) {
@@ -151,7 +164,8 @@ export const usePlannerStore = create<PlannerState>((set) => ({
     }),
   setForm: (form) =>
     set(() => ({
-      form: normalizeForm({ ...defaultForm, ...form, preferences: form.preferences ?? [] })
+      form: normalizeForm({ ...defaultForm, ...form, preferences: form.preferences ?? [] }),
+      activeRoute: null
     })),
   hydrateFromPlan: ({ form, itinerary }) =>
     set(() => ({
@@ -159,7 +173,8 @@ export const usePlannerStore = create<PlannerState>((set) => ({
       result: itinerary,
       error: null,
       focusedMarker: null,
-      focusHistory: []
+      focusHistory: [],
+      activeRoute: null
     })),
   updateActivity: (dayIndex, activityIndex, updates) =>
     set((state) => {
@@ -204,6 +219,14 @@ export const usePlannerStore = create<PlannerState>((set) => ({
         }
       };
     }),
+  setRoute: (route) =>
+    set(() => ({
+      activeRoute: route
+    })),
+  clearRoute: () =>
+    set(() => ({
+      activeRoute: null
+    })),
   reset: () =>
     set(() => ({
       form: normalizeForm(defaultForm),
@@ -211,7 +234,8 @@ export const usePlannerStore = create<PlannerState>((set) => ({
       loading: false,
       error: null,
       focusedMarker: null,
-      focusHistory: []
+      focusHistory: [],
+      activeRoute: null
     }))
 }));
 

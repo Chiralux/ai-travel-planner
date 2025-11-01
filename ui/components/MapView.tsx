@@ -15,6 +15,10 @@ type Marker = {
   }>;
 };
 
+type RoutePath = {
+  points: Array<{ lat: number; lng: number }>;
+};
+
 type MapViewProps = {
   markers: Marker[];
   focusedMarker?: {
@@ -25,6 +29,7 @@ type MapViewProps = {
   } | null;
   compact?: boolean;
   showInfoWindow?: boolean;
+  route?: RoutePath | null;
 };
 
 declare global {
@@ -141,11 +146,12 @@ function createNumberedMarkerElement(sequenceLabel: string) {
   return wrapper;
 }
 
-export function MapView({ markers, focusedMarker = null, compact = false, showInfoWindow = true }: MapViewProps) {
+export function MapView({ markers, focusedMarker = null, compact = false, showInfoWindow = true, route = null }: MapViewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<any>(null);
   const infoWindowRef = useRef<any>(null);
   const markerInstancesRef = useRef<Array<{ overlay: any; marker: Marker }>>([]);
+  const routeOverlayRef = useRef<{ polyline?: any } | null>(null);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const hasMountedRef = useRef(false);
 
@@ -241,6 +247,11 @@ export function MapView({ markers, focusedMarker = null, compact = false, showIn
       markerInstancesRef.current.forEach(({ overlay }) => overlay.setMap(null));
       markerInstancesRef.current = [];
 
+      if (routeOverlayRef.current?.polyline) {
+        routeOverlayRef.current.polyline.setMap(null);
+        routeOverlayRef.current = null;
+      }
+
       infoWindowRef.current?.close?.();
       infoWindowRef.current = null;
 
@@ -318,6 +329,55 @@ export function MapView({ markers, focusedMarker = null, compact = false, showIn
       debug("markers effect: fit view");
     }
   }, [validMarkers, status, sdkReady, showInfoWindow]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const AMapCtor = typeof window !== "undefined" && sdkReady ? window.AMap : undefined;
+
+    if (routeOverlayRef.current?.polyline) {
+      routeOverlayRef.current.polyline.setMap(null);
+      routeOverlayRef.current = null;
+    }
+
+    if (!map || status !== "ready" || !AMapCtor) {
+      return;
+    }
+
+    const pathPoints = (route?.points ?? []).filter((point) =>
+      Number.isFinite(point.lat) && Number.isFinite(point.lng)
+    );
+
+    if (pathPoints.length < 2) {
+      return;
+    }
+
+    const polyline = new AMapCtor.Polyline({
+      path: pathPoints.map((point) => new AMapCtor.LngLat(point.lng, point.lat)),
+      showDir: true,
+      strokeColor: "#38bdf8",
+      strokeWeight: 6,
+      strokeOpacity: 0.85,
+      lineJoin: "round",
+      lineCap: "round"
+    });
+
+    polyline.setMap(map);
+    routeOverlayRef.current = { polyline };
+
+    const overlays = markerInstancesRef.current.map((item) => item.overlay);
+    overlays.push(polyline);
+
+    if (overlays.length > 0 && typeof map.setFitView === "function") {
+      map.setFitView(overlays);
+    }
+
+    return () => {
+      polyline.setMap(null);
+      if (routeOverlayRef.current?.polyline === polyline) {
+        routeOverlayRef.current = null;
+      }
+    };
+  }, [route, status, sdkReady]);
 
   useEffect(() => {
     const map = mapRef.current;

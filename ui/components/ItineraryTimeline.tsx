@@ -15,6 +15,7 @@ type ItineraryTimelineProps = {
   onActivityFocus?: (marker: FocusableMarker) => void;
   onActivitySelect?: (activityElementId: string) => void;
   onActivityUpdate?: (dayIndex: number, activityIndex: number, updates: Partial<Activity>) => void;
+  onActivityNavigate?: (dayIndex: number, activityIndex: number) => void;
 };
 
 type ActivityEditorState = {
@@ -37,10 +38,11 @@ function formatConfidenceLabel(confidence?: number): string | null {
   return `置信度 ${clamped}%`;
 }
 
-export function ItineraryTimeline({ itinerary, onActivityFocus, onActivitySelect, onActivityUpdate }: ItineraryTimelineProps) {
+export function ItineraryTimeline({ itinerary, onActivityFocus, onActivitySelect, onActivityUpdate, onActivityNavigate }: ItineraryTimelineProps) {
   const [expandedActivities, setExpandedActivities] = useState<Set<string>>(() => new Set());
   const [editorState, setEditorState] = useState<ActivityEditorState | null>(null);
   const canEdit = typeof onActivityUpdate === "function";
+  const canNavigate = typeof onActivityNavigate === "function";
 
   useEffect(() => {
     setExpandedActivities(new Set());
@@ -129,6 +131,16 @@ export function ItineraryTimeline({ itinerary, onActivityFocus, onActivitySelect
                 const handleToggleExpanded = (event: MouseEvent<HTMLButtonElement>) => {
                   event.stopPropagation();
                   toggleExpanded(activityKey);
+                };
+
+                const handleNavigateClick = (event: MouseEvent<HTMLButtonElement>) => {
+                  event.stopPropagation();
+
+                  if (!canNavigate || !hasCoords) {
+                    return;
+                  }
+
+                  onActivityNavigate?.(dayIndex, index);
                 };
 
                 const handleEditClick = (event: MouseEvent<HTMLButtonElement>) => {
@@ -258,6 +270,21 @@ export function ItineraryTimeline({ itinerary, onActivityFocus, onActivitySelect
                                 onClick={handleEditClick}
                               >
                                 编辑
+                              </button>
+                            )}
+                            {canNavigate && (
+                              <button
+                                type="button"
+                                className={`rounded border px-2 py-1 text-xs transition ${
+                                  hasCoords
+                                    ? "border-emerald-500 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/20"
+                                    : "cursor-not-allowed border-slate-700 bg-slate-900 text-slate-500"
+                                }`}
+                                onClick={handleNavigateClick}
+                                disabled={!hasCoords}
+                                title={hasCoords ? "使用地图导航" : "当前活动缺少坐标"}
+                              >
+                                导航
                               </button>
                             )}
                           </>
