@@ -30,6 +30,9 @@ type MapViewProps = {
   compact?: boolean;
   showInfoWindow?: boolean;
   route?: RoutePath | null;
+  selecting?: boolean;
+  onSelectPoint?: (point: { lat: number; lng: number }) => void;
+  selectionPoint?: { lat: number; lng: number } | null;
 };
 
 declare global {
@@ -146,12 +149,22 @@ function createNumberedMarkerElement(sequenceLabel: string) {
   return wrapper;
 }
 
-export function MapView({ markers, focusedMarker = null, compact = false, showInfoWindow = true, route = null }: MapViewProps) {
+export function MapView({
+  markers,
+  focusedMarker = null,
+  compact = false,
+  showInfoWindow = true,
+  route = null,
+  selecting = false,
+  onSelectPoint,
+  selectionPoint = null
+}: MapViewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<any>(null);
   const infoWindowRef = useRef<any>(null);
   const markerInstancesRef = useRef<Array<{ overlay: any; marker: Marker }>>([]);
   const routeOverlayRef = useRef<{ polyline?: any } | null>(null);
+  const selectionOverlayRef = useRef<any>(null);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const hasMountedRef = useRef(false);
 
@@ -252,6 +265,11 @@ export function MapView({ markers, focusedMarker = null, compact = false, showIn
         routeOverlayRef.current = null;
       }
 
+      if (selectionOverlayRef.current) {
+        selectionOverlayRef.current.setMap(null);
+        selectionOverlayRef.current = null;
+      }
+
       infoWindowRef.current?.close?.();
       infoWindowRef.current = null;
 
@@ -329,6 +347,78 @@ export function MapView({ markers, focusedMarker = null, compact = false, showIn
       debug("markers effect: fit view");
     }
   }, [validMarkers, status, sdkReady, showInfoWindow]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const AMapCtor = typeof window !== "undefined" && sdkReady ? window.AMap : undefined;
+
+    if (!map || !AMapCtor) {
+      return;
+    }
+
+    if (selectionOverlayRef.current) {
+      selectionOverlayRef.current.setMap(null);
+      selectionOverlayRef.current = null;
+    }
+
+    if (selectionPoint && Number.isFinite(selectionPoint.lat) && Number.isFinite(selectionPoint.lng)) {
+      const overlay = new AMapCtor.Marker({
+        position: [selectionPoint.lng, selectionPoint.lat],
+        icon: new AMapCtor.Icon({
+          size: new AMapCtor.Size(26, 36),
+          image: "//a.amap.com/jsapi_demos/static/demo-center/icons/poi-marker-default.png",
+          imageSize: new AMapCtor.Size(26, 36)
+        }),
+        offset: new AMapCtor.Pixel(-13, -36)
+      });
+
+      overlay.setMap(map);
+      selectionOverlayRef.current = overlay;
+    }
+
+    return () => {
+      if (selectionOverlayRef.current) {
+        selectionOverlayRef.current.setMap(null);
+        selectionOverlayRef.current = null;
+      }
+    };
+  }, [selectionPoint, sdkReady]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const AMapCtor = typeof window !== "undefined" && sdkReady ? window.AMap : undefined;
+
+    if (!map || !AMapCtor) {
+      return;
+    }
+
+    const handleClick = (event: { lnglat: { getLat: () => number; getLng: () => number } }) => {
+      if (!onSelectPoint) {
+        return;
+      }
+
+      const lat = event.lnglat.getLat();
+      const lng = event.lnglat.getLng();
+
+      if (Number.isFinite(lat) && Number.isFinite(lng)) {
+        onSelectPoint({ lat, lng });
+      }
+    };
+
+    if (selecting) {
+      map.setCursor("crosshair");
+      map.on("click", handleClick);
+    } else {
+      map.setCursor("default");
+    }
+
+    return () => {
+      map.off("click", handleClick);
+      if (!selecting) {
+        map.setCursor("default");
+      }
+    };
+  }, [selecting, sdkReady, onSelectPoint]);
 
   useEffect(() => {
     const map = mapRef.current;

@@ -238,6 +238,14 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
   const [navigationCustomOrigin, setNavigationCustomOrigin] = useState<{ lat: string; lng: string; label: string }>(
     () => ({ lat: "", lng: "", label: "" })
   );
+  const [customOriginQuery, setCustomOriginQuery] = useState("");
+  const [customOriginSuggestions, setCustomOriginSuggestions] = useState<
+    Array<{ id: string; name: string; subtitle?: string; lat: number; lng: number }>
+  >([]);
+  const [customOriginLoading, setCustomOriginLoading] = useState(false);
+  const [customOriginError, setCustomOriginError] = useState<string | null>(null);
+  const [customOriginSelectMode, setCustomOriginSelectMode] = useState(false);
+  const [customOriginSelection, setCustomOriginSelection] = useState<{ lat: number; lng: number } | null>(null);
   const latestParseIdRef = useRef(0);
   const hasTriedLocateRef = useRef(false);
   const lastLocatedOriginRef = useRef<{ lat: number; lng: number; label?: string; address?: string } | null>(null);
@@ -555,9 +563,21 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
 
       if (option === "current-location") {
         void detectCurrentOrigin({ updateEmptyOrigin: true });
+        setCustomOriginSelectMode(false);
+      } else if (option === "custom") {
+        setCustomOriginSelectMode(false);
+        setCustomOriginQuery((prev) => navigationCustomOrigin.label?.trim() ?? prev);
+        setCustomOriginSuggestions([]);
+        setCustomOriginError(null);
+      } else {
+        setCustomOriginSelectMode(false);
+        setCustomOriginQuery("");
+        setCustomOriginSuggestions([]);
+        setCustomOriginError(null);
+        setCustomOriginSelection(null);
       }
     },
-    [detectCurrentOrigin]
+    [detectCurrentOrigin, navigationCustomOrigin.label]
   );
 
 
@@ -1203,6 +1223,109 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
     });
   }, [navigationMode, handleNavigateToActivity]);
 
+  const fetchCustomOriginSuggestions = useCallback(
+    async (query: string) => {
+      const trimmed = query.trim();
+
+      if (trimmed.length === 0) {
+        setCustomOriginSuggestions([]);
+        setCustomOriginError(null);
+        return;
+      }
+
+      setCustomOriginLoading(true);
+      setCustomOriginError(null);
+
+      try {
+        const params = new URLSearchParams({ q: trimmed });
+        const response = await fetch(`/api/geocode/forward?${params.toString()}`);
+        const json = await response.json();
+
+        if (!response.ok || !json?.ok) {
+          throw new Error(json?.error ?? "地点搜索失败，请稍后再试。");
+        }
+
+        const suggestions = (json.data?.suggestions ?? []) as Array<{
+          id: string;
+          name: string;
+          subtitle?: string;
+          lat: number;
+          lng: number;
+        }>;
+
+        setCustomOriginSuggestions(suggestions.slice(0, 10));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "地点搜索失败，请稍后再试。";
+        setCustomOriginError(message);
+      } finally {
+        setCustomOriginLoading(false);
+      }
+    },
+    []
+  );
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      if (navigationOriginOption === "custom") {
+        void fetchCustomOriginSuggestions(customOriginQuery);
+      }
+    }, 350);
+
+    return () => {
+      clearTimeout(handler);
+    };
+  }, [customOriginQuery, navigationOriginOption, fetchCustomOriginSuggestions]);
+
+  const handleCustomOriginSelect = useCallback(
+    (suggestion: { id: string; name: string; subtitle?: string; lat: number; lng: number }) => {
+      setNavigationCustomOrigin({
+        lat: suggestion.lat.toFixed(6),
+        lng: suggestion.lng.toFixed(6),
+        label: suggestion.subtitle ? `${suggestion.name}（${suggestion.subtitle}）` : suggestion.name
+      });
+      setCustomOriginSelection({ lat: suggestion.lat, lng: suggestion.lng });
+      setCustomOriginQuery(suggestion.name);
+      setCustomOriginSuggestions([]);
+      setCustomOriginError(null);
+      setCustomOriginSelectMode(false);
+    },
+    []
+  );
+
+  const handleCustomOriginMapSelect = useCallback(
+    async (point: { lat: number; lng: number }) => {
+      setCustomOriginSelection(point);
+      setNavigationCustomOrigin((prev) => ({
+        ...prev,
+        lat: point.lat.toFixed(6),
+        lng: point.lng.toFixed(6)
+      }));
+
+      try {
+        const params = new URLSearchParams({ lat: String(point.lat), lng: String(point.lng) });
+        const response = await fetch(`/api/geocode/reverse?${params.toString()}`);
+        const json = await response.json();
+
+        if (response.ok && json?.ok) {
+          const label = json.data?.label ?? json.data?.formattedAddress ?? "地图选点";
+          setNavigationCustomOrigin((prev) => ({
+            ...prev,
+            label
+          }));
+          setCustomOriginQuery(label);
+        } else {
+          setCustomOriginQuery(`Lat ${point.lat.toFixed(4)}, Lng ${point.lng.toFixed(4)}`);
+        }
+      } catch (error) {
+        console.error("Failed to reverse geocode custom origin", error);
+        setCustomOriginQuery(`Lat ${point.lat.toFixed(4)}, Lng ${point.lng.toFixed(4)}`);
+      } finally {
+        setCustomOriginSelectMode(false);
+      }
+    },
+    []
+  );
+
   const handleClearRoute = useCallback(() => {
     clearRoute();
     lastSuccessfulNavigationRef.current = null;
@@ -1622,6 +1745,47 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
             )}
             {navigationOriginOption === "custom" && (
               <div className="flex flex-col gap-2 text-[11px] text-slate-400">
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    type="text"
+                    value={customOriginQuery}
+                    onChange={(event) => setCustomOriginQuery(event.target.value)}
+                    className="flex-1 min-w-[220px] rounded border border-slate-700 bg-slate-900 px-2 py-1 text-slate-100 focus:border-emerald-500 focus:outline-none"
+                    placeholder="输入地址、地标或地点名称"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setCustomOriginSelectMode((prev) => !prev)}
+                    className={`rounded border px-2 py-1 transition ${
+                      customOriginSelectMode
+                        ? "border-emerald-400 bg-emerald-500/20 text-emerald-100"
+                        : "border-slate-700 bg-slate-900 text-slate-300 hover:border-emerald-400 hover:text-emerald-100"
+                    }`}
+                  >
+                    {customOriginSelectMode ? "点击地图选择中" : "在地图上选择"}
+                  </button>
+                </div>
+                {customOriginError && <p className="text-red-400">{customOriginError}</p>}
+                {customOriginLoading && <p className="text-slate-500">正在搜索地点...</p>}
+                {!customOriginLoading && customOriginSuggestions.length > 0 && (
+                  <ul className="max-h-48 overflow-y-auto rounded border border-slate-800 bg-slate-900/80 text-slate-200">
+                    {customOriginSuggestions.map((suggestion) => (
+                      <li key={suggestion.id}>
+                        <button
+                          type="button"
+                          onClick={() => handleCustomOriginSelect(suggestion)}
+                          className="flex w-full flex-col items-start gap-1 border-b border-slate-800 px-3 py-2 text-left text-slate-200 hover:bg-slate-800/80"
+                        >
+                          <span className="text-sm font-medium text-white">{suggestion.name}</span>
+                          {suggestion.subtitle && <span className="text-xs text-slate-400">{suggestion.subtitle}</span>}
+                          <span className="text-[11px] text-slate-500">
+                            {suggestion.lat.toFixed(4)}, {suggestion.lng.toFixed(4)}
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
                 <div className="flex flex-wrap gap-2">
                   <input
                     type="text"
@@ -1645,7 +1809,7 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
                     placeholder="备注名称（可选）"
                   />
                 </div>
-                <p>请填写有效的经纬度，例如：纬度 31.2304，经度 121.4737。</p>
+                <p>可以通过搜索或地图选点自动填入经纬度，也支持手动输入。例如：纬度 31.2304，经度 121.4737。</p>
               </div>
             )}
             {navigationOriginOption === "previous-activity" && (
@@ -1657,6 +1821,9 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
               markers={markers}
               focusedMarker={focusedMarker ?? undefined}
               route={routeForMap}
+              selecting={navigationOriginOption === "custom" && customOriginSelectMode}
+              onSelectPoint={navigationOriginOption === "custom" && customOriginSelectMode ? handleCustomOriginMapSelect : undefined}
+              selectionPoint={navigationOriginOption === "custom" ? customOriginSelection : null}
             />
           </div>
           {navigationStatus && (
