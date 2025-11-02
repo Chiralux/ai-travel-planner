@@ -177,6 +177,8 @@ export function MapView({
   const googleInfoWindowRef = useRef<any>(null);
   const googleSelectionMarkerRef = useRef<any>(null);
   const googleClickListenerRef = useRef<any>(null);
+  const googleRouteBoundsRef = useRef<any>(null);
+  const amapRouteBoundsRef = useRef<any>(null);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const hasMountedRef = useRef(false);
 
@@ -532,6 +534,16 @@ export function MapView({
 
     googleMarkersRef.current = nextMarkers;
 
+    const routePoints = Array.isArray(route?.points) ? route.points : [];
+    const hasActiveRoute = routePoints.length >= 2;
+
+    if (hasActiveRoute) {
+      if (googleRouteBoundsRef.current) {
+        map.fitBounds(googleRouteBoundsRef.current);
+      }
+      return;
+    }
+
     if (validMarkers.length === 1) {
       const single = validMarkers[0];
       map.setCenter({ lat: single.lat, lng: single.lng });
@@ -548,7 +560,7 @@ export function MapView({
         map.fitBounds(bounds);
       }
     }
-  }, [isGoogleProvider, googleReady, validMarkers, showInfoWindow]);
+  }, [isGoogleProvider, googleReady, validMarkers, showInfoWindow, route]);
 
   useEffect(() => {
     if (!isGoogleProvider) {
@@ -712,11 +724,23 @@ export function MapView({
 
     markerInstancesRef.current = instances;
 
+    const routePoints = Array.isArray(route?.points) ? route.points : [];
+    const hasActiveRoute = routePoints.length >= 2;
+
+    if (hasActiveRoute) {
+      if (amapRouteBoundsRef.current && typeof map.setBounds === "function") {
+        map.setBounds(amapRouteBoundsRef.current);
+      } else if (routeOverlayRef.current?.polyline && typeof map.setFitView === "function") {
+        map.setFitView([routeOverlayRef.current.polyline]);
+      }
+      return;
+    }
+
     if (instances.length > 0) {
       map.setFitView(instances.map((item) => item.overlay));
       debug("markers effect: fit view");
     }
-  }, [provider, validMarkers, status, sdkReady, showInfoWindow]);
+  }, [provider, validMarkers, status, sdkReady, showInfoWindow, route]);
 
   useEffect(() => {
     if (provider !== "amap") {
@@ -811,6 +835,8 @@ export function MapView({
       routeOverlayRef.current = null;
     }
 
+    amapRouteBoundsRef.current = null;
+
     if (!map || status !== "ready" || !AMapCtor) {
       return;
     }
@@ -836,11 +862,17 @@ export function MapView({
     polyline.setMap(map);
     routeOverlayRef.current = { polyline };
 
-    const overlays = markerInstancesRef.current.map((item) => item.overlay);
-    overlays.push(polyline);
+    amapRouteBoundsRef.current = typeof polyline.getBounds === "function" ? polyline.getBounds() : null;
 
-    if (overlays.length > 0 && typeof map.setFitView === "function") {
-      map.setFitView(overlays);
+    if (amapRouteBoundsRef.current && typeof map.setFitView === "function") {
+      map.setFitView([polyline]);
+    } else {
+      const overlays = markerInstancesRef.current.map((item) => item.overlay);
+      overlays.push(polyline);
+
+      if (overlays.length > 0 && typeof map.setFitView === "function") {
+        map.setFitView(overlays);
+      }
     }
 
     return () => {
@@ -848,6 +880,7 @@ export function MapView({
       if (routeOverlayRef.current?.polyline === polyline) {
         routeOverlayRef.current = null;
       }
+      amapRouteBoundsRef.current = null;
     };
   }, [provider, route, status, sdkReady]);
 
@@ -860,6 +893,7 @@ export function MapView({
     const map = googleMapRef.current;
 
     if (!googleReady || !map || !googleGlobal?.maps) {
+      googleRouteBoundsRef.current = null;
       return;
     }
 
@@ -871,6 +905,8 @@ export function MapView({
       }
       googlePolylineRef.current = null;
     }
+
+    googleRouteBoundsRef.current = null;
 
     const pathPoints = (route?.points ?? []).filter(
       (point) => Number.isFinite(point.lat) && Number.isFinite(point.lng)
@@ -891,17 +927,20 @@ export function MapView({
     polyline.setMap(map);
     googlePolylineRef.current = polyline;
 
-    const bounds = new googleGlobal.maps.LatLngBounds();
-    pathPoints.forEach((point) => bounds.extend(new googleGlobal.maps.LatLng(point.lat, point.lng)));
-    googleMarkersRef.current.forEach(({ marker }) => {
-      const position = marker.getPosition?.();
-      if (position) {
-        bounds.extend(position);
-      }
-    });
+    googleRouteBoundsRef.current = (function buildBounds() {
+      const bounds = new googleGlobal.maps.LatLngBounds();
+      pathPoints.forEach((point) => bounds.extend(new googleGlobal.maps.LatLng(point.lat, point.lng)));
+      googleMarkersRef.current.forEach(({ marker }) => {
+        const position = marker.getPosition?.();
+        if (position) {
+          bounds.extend(position);
+        }
+      });
+      return bounds.isEmpty?.() ? null : bounds;
+    })();
 
-    if (!bounds.isEmpty?.()) {
-      map.fitBounds(bounds);
+    if (googleRouteBoundsRef.current) {
+      map.fitBounds(googleRouteBoundsRef.current);
     }
   }, [isGoogleProvider, googleReady, route]);
 
@@ -960,6 +999,11 @@ export function MapView({
         label: contentMarker.label ?? "",
         address: contentMarker.address
       });
+
+      if (googleRouteBoundsRef.current && typeof infoWindowRef.current?.close === "function") {
+        infoWindowRef.current.close();
+      }
+
       infoWindowRef.current.setContent(content);
       infoWindowRef.current.open(map, position);
     }
@@ -989,11 +1033,14 @@ export function MapView({
     }
 
     const position = new googleGlobal.maps.LatLng(focusedMarker.lat, focusedMarker.lng);
-    map.panTo(position);
-
-    const currentZoom = map.getZoom?.();
-    const targetZoom = typeof currentZoom === "number" ? Math.max(currentZoom, 13) : 13;
-    map.setZoom(targetZoom);
+    if (googleRouteBoundsRef.current) {
+      map.fitBounds(googleRouteBoundsRef.current);
+    } else {
+      map.panTo(position);
+      const currentZoom = map.getZoom?.();
+      const targetZoom = typeof currentZoom === "number" ? Math.max(currentZoom, 13) : 13;
+      map.setZoom(targetZoom);
+    }
 
     if (!showInfoWindow) {
       googleInfoWindowRef.current?.close?.();

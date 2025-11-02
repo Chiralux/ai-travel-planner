@@ -1274,7 +1274,6 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
           address: activity.address
         });
 
-        setIsMapVisible(true);
         setNavigationStatus(
           `${resolvedProviderLabel} 路线已更新（${resolvedModeLabel} · 起点：${navigationOriginLabel}）：约 ${formatDistance(
             data.distanceMeters
