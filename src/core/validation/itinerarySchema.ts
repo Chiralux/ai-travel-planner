@@ -1,5 +1,26 @@
 import { z } from "zod";
 
+const activityMediaRequestSchema = z
+  .object({
+    streetView: z
+      .object({
+        lat: z.number().optional(),
+        lng: z.number().optional(),
+        addressCandidates: z.array(z.string()).max(5).optional(),
+        minConfidence: z.number().min(0).max(1).optional()
+      })
+      .optional(),
+    placePhotos: z
+      .object({
+        query: z.string().min(1),
+        destination: z.string().optional(),
+        language: z.string().optional(),
+        maxResults: z.number().int().positive().optional()
+      })
+      .optional()
+  })
+  .optional();
+
 // Single itinerary activity item with optional metadata.
 const activitySchema = z
   .object({
@@ -12,7 +33,8 @@ const activitySchema = z
     address: z.string().optional(),
     cost_estimate: z.number().nonnegative().optional(),
     maps_confidence: z.number().min(0).max(1).optional(),
-    photos: z.array(z.string().url()).max(6).optional()
+    photos: z.array(z.string().url()).max(6).optional(),
+    media_requests: activityMediaRequestSchema
   })
   .describe("Single itinerary activity entry");
 

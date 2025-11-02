@@ -16,6 +16,7 @@ import {
 import { mergeParsedInput, parseTravelInput as localParseTravelInput } from "../../core/utils/travelInputParser";
 import { pickMapProvider, type MapProvider } from "../../lib/maps/provider";
 import { useSupabaseAuth } from "../../lib/supabase/AuthProvider";
+import type { Activity } from "../../core/validation/itinerarySchema";
 
 const preferenceOptions = ["美食", "文化", "户外", "亲子", "夜生活", "艺术"];
 const GOOGLE_MAPS_AVAILABLE = Boolean(process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY);
@@ -273,6 +274,8 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
   const suppressCustomOriginFetchRef = useRef(false);
   const mapSectionRef = useRef<HTMLDivElement | null>(null);
   const latestNavigationAttemptRef = useRef(0);
+  const mediaPrefetchRegistryRef = useRef<Set<string>>(new Set());
+  const mediaSignatureRef = useRef<string | null>(null);
   const navigationModeLabel = NAVIGATION_MODE_LABELS[navigationMode];
   const navigationOriginLabel = NAVIGATION_ORIGIN_LABELS[navigationOriginOption];
   const mapProvider = useMemo(() => {
@@ -1660,6 +1663,111 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
     setNavigationStatus("已移除导航路线。");
     setNavigationLoading(false);
   }, [clearRoute]);
+
+  useEffect(() => {
+    if (!result) {
+      mediaPrefetchRegistryRef.current.clear();
+      mediaSignatureRef.current = null;
+      return;
+    }
+
+    const signature = `${result.destination}|${result.days}|${result.daily_plan.length}`;
+
+    if (mediaSignatureRef.current !== signature) {
+      mediaPrefetchRegistryRef.current.clear();
+      mediaSignatureRef.current = signature;
+    }
+
+    let cancelled = false;
+
+    const run = async () => {
+      for (let dayIndex = 0; dayIndex < result.daily_plan.length; dayIndex += 1) {
+        const day = result.daily_plan[dayIndex];
+
+        for (let activityIndex = 0; activityIndex < day.activities.length; activityIndex += 1) {
+          if (cancelled) {
+            return;
+          }
+
+          const activity = day.activities[activityIndex];
+
+          if (!activity.media_requests) {
+            continue;
+          }
+
+          const activityKey = `${signature}|${dayIndex}|${activityIndex}|${activity.title}`;
+
+          if (mediaPrefetchRegistryRef.current.has(activityKey)) {
+            continue;
+          }
+
+          mediaPrefetchRegistryRef.current.add(activityKey);
+
+          try {
+            const response = await fetch("/api/activity-media", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ destination: result.destination, activity })
+            });
+
+            if (!response.ok) {
+              continue;
+            }
+
+            const payload = (await response.json()) as {
+              ok?: boolean;
+              data?: { photos?: string[]; note?: string; maps_confidence?: number };
+            };
+
+            if (!payload?.ok || !payload.data || cancelled) {
+              continue;
+            }
+
+            const updates: Partial<Activity> = { media_requests: undefined };
+
+            if (Array.isArray(payload.data.photos) && payload.data.photos.length > 0) {
+              const merged = Array.from(
+                new Set([...(activity.photos ?? []), ...payload.data.photos])
+              ).slice(0, 6);
+              updates.photos = merged;
+            }
+
+            if (typeof payload.data.note === "string" && payload.data.note !== activity.note) {
+              updates.note = payload.data.note;
+            }
+
+            if (
+              typeof payload.data.maps_confidence === "number" &&
+              (activity.maps_confidence == null ||
+                Math.abs(payload.data.maps_confidence - activity.maps_confidence) > 1e-6)
+            ) {
+              updates.maps_confidence = payload.data.maps_confidence;
+            }
+
+            updateActivity(dayIndex, activityIndex, updates);
+          } catch (error) {
+            if (
+              typeof window !== "undefined" &&
+              process.env.NODE_ENV !== "production"
+            ) {
+              console.warn("[Planner] Failed to load activity media", {
+                destination: result.destination,
+                dayIndex,
+                activityIndex,
+                error
+              });
+            }
+          }
+        }
+      }
+    };
+
+    run();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [result, updateActivity]);
 
   return (
     <section className="flex flex-col gap-10">

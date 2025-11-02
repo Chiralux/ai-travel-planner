@@ -9,19 +9,16 @@ import type {
 import { itinerarySchema, type BudgetBreakdown, type Itinerary } from "../core/validation/itinerarySchema";
 import { loadEnv } from "../core/config/env";
 import { isCoordinateInChina } from "../lib/maps/provider";
-import { fetchStreetViewImage, type StreetViewFetchResult } from "../adapters/maps/googleStreetView";
-import { searchPlacePhotosByName } from "../adapters/maps/googlePlacesPhotos";
-import { geocodeAddressWithGoogle } from "../adapters/maps/googleGeocode";
 
 const CACHE_PREFIX = "itinerary";
 const DEFAULT_CACHE_TTL_SECONDS = 60 * 60; // 1 hour cache window
 const LLM_LOCATION_CONFIDENCE_THRESHOLD = 0.45;
 const LLM_LOCATION_MIN_CONFIDENCE = 0.35;
 const AI_LOCATION_NOTE = "位置信息由AI辅助推断，请注意核实。";
-const STREET_VIEW_CONFIDENCE_THRESHOLD = 0.8;
-const GEOCODED_CONFIDENCE = 0.85;
-const NAME_BASED_PHOTO_CONFIDENCE_THRESHOLD = 0.8;
-const MAX_NAME_BASED_PHOTOS = 4;
+export const STREET_VIEW_CONFIDENCE_THRESHOLD = 0.8;
+export const GEOCODED_CONFIDENCE = 0.85;
+export const NAME_BASED_PHOTO_CONFIDENCE_THRESHOLD = 0.8;
+export const MAX_NAME_BASED_PHOTOS = 4;
 
 function createCacheKey(params: GenerateItineraryInput): string {
   const normalized = JSON.stringify(params);
@@ -32,12 +29,6 @@ function createCacheKey(params: GenerateItineraryInput): string {
 type ItineraryServiceDeps = {
   llm: LLMClient;
   maps: MapsClient;
-};
-
-type ResolvedCoordinate = {
-  lat: number;
-  lng: number;
-  source: "existing" | "geocoded";
 };
 
 type BudgetAccumulator = {
@@ -333,12 +324,11 @@ export class ItineraryService {
           originalActivities: day.activities,
           enrichedActivities
         });
-        const activitiesWithStreetView = await this.attachStreetViewPhotosIfNeeded(refinedActivities);
-        const activitiesWithNamePhotos = await this.attachNameBasedPhotosIfNeeded(
+        const activitiesWithMediaRequests = this.prepareMediaRequests(
           validated.destination,
-          activitiesWithStreetView
+          refinedActivities
         );
-        enrichedDailyPlan.push({ ...day, activities: activitiesWithNamePhotos });
+        enrichedDailyPlan.push({ ...day, activities: activitiesWithMediaRequests });
       } catch (error) {
         if (process.env.NODE_ENV !== "production") {
           console.warn("[ItineraryService] Activity enrichment failed", error);
@@ -476,181 +466,78 @@ export class ItineraryService {
     };
   }
 
-  private async attachStreetViewPhotosIfNeeded(activities: Activity[]): Promise<Activity[]> {
+  private prepareMediaRequests(destination: string, activities: Activity[]): Activity[] {
     if (!this.googleMapsApiKey) {
-      return activities;
-    }
-
-    const coordinateCache = new Map<string, ResolvedCoordinate | null>();
-    const cache = new Map<string, StreetViewFetchResult>();
-
-    const results: Activity[] = [];
-
-    for (const activity of activities) {
-      const resolved = await this.resolveStreetViewCoordinate(activity, coordinateCache);
-
-      if (!resolved) {
-        results.push(activity);
-        continue;
-      }
-
-      const coordinate = { lat: resolved.lat, lng: resolved.lng };
-
-      if (isCoordinateInChina(coordinate)) {
-        results.push(activity);
-        continue;
-      }
-
-      let effectiveConfidence =
-        typeof activity.maps_confidence === "number" && Number.isFinite(activity.maps_confidence)
-          ? activity.maps_confidence
-          : 0;
-
-      if (resolved.source === "geocoded" && effectiveConfidence < GEOCODED_CONFIDENCE) {
-        effectiveConfidence = GEOCODED_CONFIDENCE;
-      }
-
-      if (effectiveConfidence < STREET_VIEW_CONFIDENCE_THRESHOLD) {
-        const updated = hasValidCoordinates(activity)
-          ? { ...activity, maps_confidence: effectiveConfidence }
-          : {
-              ...activity,
-              lat: coordinate.lat,
-              lng: coordinate.lng,
-              maps_confidence: effectiveConfidence
-            };
-        results.push(updated);
-        continue;
-      }
-
-      const existingPhotos = Array.isArray(activity.photos) ? [...activity.photos] : [];
-
-      if (existingPhotos.length >= 6) {
-        results.push({ ...activity, maps_confidence: effectiveConfidence });
-        continue;
-      }
-
-      const cacheKey = `${coordinate.lat.toFixed(6)},${coordinate.lng.toFixed(6)}`;
-
-      let streetViewResult = cache.get(cacheKey);
-
-      if (!streetViewResult) {
-        streetViewResult = await fetchStreetViewImage({
-          lat: coordinate.lat,
-          lng: coordinate.lng,
-          apiKey: this.googleMapsApiKey,
-          size: "640x640",
-          source: "outdoor"
-        });
-        cache.set(cacheKey, streetViewResult);
-      }
-
-      const baseActivity = hasValidCoordinates(activity)
-        ? { ...activity, maps_confidence: effectiveConfidence }
-        : {
-            ...activity,
-            lat: coordinate.lat,
-            lng: coordinate.lng,
-            maps_confidence: effectiveConfidence
-          };
-
-      if (!streetViewResult.url) {
-        const status = streetViewResult.status || "UNKNOWN";
-        const note = appendNote(baseActivity.note, `未能获取 Google 街景（状态：${status}）`);
-        results.push({
-          ...baseActivity,
-          note
-        });
-        continue;
-      }
-
-      if (!existingPhotos.includes(streetViewResult.url)) {
-        existingPhotos.push(streetViewResult.url);
-      }
-
-      const nextPhotos = existingPhotos.slice(0, 6);
-      const note = appendNote(baseActivity.note, "附加了 Google 街景图像，请确认实际情况。");
-
-      results.push({
-        ...baseActivity,
-        photos: nextPhotos,
-        note
+      return activities.map((activity) => {
+        if (activity.media_requests) {
+          const { media_requests: _omit, ...withoutRequests } = activity;
+          return withoutRequests;
+        }
+        return activity;
       });
     }
 
-    return results;
+    return activities.map((activity) => {
+      const next: Activity = { ...activity };
+      const requests: NonNullable<Activity["media_requests"]> = {};
+
+      const existingPhotos = Array.isArray(activity.photos) ? activity.photos : [];
+      const confidence =
+        typeof activity.maps_confidence === "number" && Number.isFinite(activity.maps_confidence)
+          ? activity.maps_confidence
+          : 0;
+      const coordinate = hasValidCoordinates(activity)
+        ? { lat: activity.lat as number, lng: activity.lng as number }
+        : null;
+
+      if (
+        confidence >= STREET_VIEW_CONFIDENCE_THRESHOLD &&
+        (coordinate || this.isLikelyInternationalDestination(destination))
+      ) {
+        const isForeignCoordinate = coordinate ? !isCoordinateInChina(coordinate) : true;
+        const addressCandidates = coordinate ? [] : this.collectAddressCandidates(activity);
+
+        if ((coordinate && isForeignCoordinate) || (!coordinate && addressCandidates.length > 0)) {
+          requests.streetView = {
+            lat: coordinate?.lat,
+            lng: coordinate?.lng,
+            addressCandidates: addressCandidates.length > 0 ? addressCandidates : undefined,
+            minConfidence: confidence
+          };
+        }
+      }
+
+      if (
+        this.shouldSearchPhotosByName(destination, activity) &&
+        existingPhotos.length < MAX_NAME_BASED_PHOTOS
+      ) {
+        requests.placePhotos = {
+          query: activity.title.trim(),
+          destination,
+          language: this.preferredGoogleLanguage(destination),
+          maxResults: MAX_NAME_BASED_PHOTOS
+        };
+      }
+
+      if (requests.streetView || requests.placePhotos) {
+        next.media_requests = requests;
+      } else if (next.media_requests) {
+        delete next.media_requests;
+      }
+
+      return next;
+    });
   }
 
-  private async attachNameBasedPhotosIfNeeded(
-    destination: string,
-    activities: Activity[]
-  ): Promise<Activity[]> {
-    if (!this.googleMapsApiKey) {
-      return activities;
-    }
+  private collectAddressCandidates(activity: Activity): string[] {
+    const candidates = [
+      activity.address,
+      this.extractAddressFromNote(activity.note)
+    ]
+      .map((value) => value?.trim())
+      .filter((value): value is string => Boolean(value));
 
-    const language = this.preferredGoogleLanguage(destination);
-    const photoCache = new Map<string, string[] | null>();
-    const results: Activity[] = [];
-
-    for (const activity of activities) {
-      if (!this.shouldSearchPhotosByName(destination, activity)) {
-        results.push(activity);
-        continue;
-      }
-
-      const title = activity.title?.trim();
-
-      if (!title) {
-        results.push(activity);
-        continue;
-      }
-
-      const cacheKey = title.toLowerCase();
-      let cachedPhotos = photoCache.get(cacheKey);
-
-      if (cachedPhotos === undefined) {
-        try {
-          const response = await searchPlacePhotosByName({
-            query: title,
-            destinationHint: destination,
-            apiKey: this.googleMapsApiKey,
-            language,
-            maxResults: MAX_NAME_BASED_PHOTOS
-          });
-
-          cachedPhotos = response?.photos ?? null;
-        } catch (error) {
-          cachedPhotos = null;
-
-          if (process.env.NODE_ENV !== "production") {
-            console.warn("[ItineraryService] Name-based photo search failed", {
-              destination,
-              title,
-              error
-            });
-          }
-        }
-
-        photoCache.set(cacheKey, cachedPhotos);
-      }
-
-      if (cachedPhotos && cachedPhotos.length > 0) {
-        const nextPhotos = cachedPhotos.slice(0, MAX_NAME_BASED_PHOTOS);
-        const note = appendNote(activity.note, "根据活动名称附加了 Google 图片，请确认准确性。");
-
-        results.push({
-          ...activity,
-          photos: nextPhotos,
-          note
-        });
-        continue;
-      }
-
-      results.push(activity);
-    }
-
-    return results;
+    return Array.from(new Set(candidates)).slice(0, 5);
   }
 
   private shouldSearchPhotosByName(destination: string, activity: Activity): boolean {
@@ -722,55 +609,6 @@ export class ItineraryService {
 
   private preferredGoogleLanguage(destination: string): string {
     return containsHanCharacters(destination) ? "zh-CN" : "en";
-  }
-
-  private async resolveStreetViewCoordinate(
-    activity: Activity,
-    cache: Map<string, ResolvedCoordinate | null>
-  ): Promise<ResolvedCoordinate | null> {
-    if (hasValidCoordinates(activity)) {
-      return { lat: activity.lat as number, lng: activity.lng as number, source: "existing" };
-    }
-
-    const addressCandidates = [activity.address, this.extractAddressFromNote(activity.note)]
-      .map((value) => value?.trim())
-      .filter((value): value is string => Boolean(value));
-
-    if (addressCandidates.length === 0) {
-      return null;
-    }
-
-    for (const address of addressCandidates) {
-      const cacheKey = address.toLowerCase();
-
-      if (cache.has(cacheKey)) {
-        const cached = cache.get(cacheKey);
-        if (cached) {
-          return cached;
-        }
-        continue;
-      }
-
-      const geocoded = await geocodeAddressWithGoogle({
-        address,
-        apiKey: this.googleMapsApiKey!,
-        language: "zh-CN"
-      });
-
-      if (geocoded) {
-        const resolved: ResolvedCoordinate = {
-          lat: geocoded.lat,
-          lng: geocoded.lng,
-          source: "geocoded"
-        };
-        cache.set(cacheKey, resolved);
-        return resolved;
-      }
-
-      cache.set(cacheKey, null);
-    }
-
-    return null;
   }
 
   private extractAddressFromNote(note?: string | null): string | null {
