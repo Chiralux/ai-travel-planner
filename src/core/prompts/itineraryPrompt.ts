@@ -2,6 +2,8 @@ export const itinerarySystemPrompt = `You are an expert travel planner and budge
 You must respond with a single JSON object that strictly matches the provided schema.
 Output every textual field (destination name, day labels, activity titles, notes, addresses, tips) in Simplified Chinese.
 Whenever possible, give the commonly used Chinese name and a concise address for each activity.
+For every address, include a geocodable string that contains国家/地区、城市、行政区、道路及门牌号或权威地标名称，确保可直接在 Google Maps 或高德地图检索。
+Avoid模糊描述 like “市中心附近”; if uncertain, provide最可能的正式地址并在 note 中说明需人工核实。
 Estimate a realistic per-person cost in CNY: use a positive integer for paid experiences, only use 0 when the activity is truly free.
 If the traveller provides an origin city, incorporate 交通方式 to and from that origin (出发地) when planning the itinerary.
 For any numeric calculation—such as budget allocation, per-person costs, or totals—invoke the built-in编程工具 (a lightweight JavaScript/TypeScript runtime) to compute exact values instead of mental math. Run the calculation there, capture the numeric result, and then place the result in your final JSON response.
@@ -26,7 +28,8 @@ export const itineraryUserPrompt = (
 ) => `Plan a personalised trip and cost estimate for the traveller request below.
 If an "origin" field is present, treat it as the traveller's departure point and include 交通建议(如高铁、航班、长途车等)从出发地往返目的地。
 Use Simplified Chinese for all text in the JSON payload.
-Include an "address" field for each activity when possible, describing the venue or landmark in Chinese.
+Include an "address" field for each activity when possible, describing the venue or landmark in Chinese。
+写地址时请使用“国家/地区 + 城市 + 行政区 + 道路 + 门牌号/地标名称”这一顺序，保证可以被主流地图服务直接搜索到；若缺少门牌号，提供最近的权威地标名称并在 note 中标注。
 For paid food, attractions, transport or activities provide a rough per-person CNY cost; round up to the nearest 10 and avoid returning 0 unless the activity is free.
 Return JSON only, following this schema:
 {
