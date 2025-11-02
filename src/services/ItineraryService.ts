@@ -8,12 +8,20 @@ import type {
 } from "../core/ports/llm";
 import { itinerarySchema, type BudgetBreakdown, type Itinerary } from "../core/validation/itinerarySchema";
 import { loadEnv } from "../core/config/env";
+import { isCoordinateInChina } from "../lib/maps/provider";
+import { fetchStreetViewImage, type StreetViewFetchResult } from "../adapters/maps/googleStreetView";
+import { searchPlacePhotosByName } from "../adapters/maps/googlePlacesPhotos";
+import { geocodeAddressWithGoogle } from "../adapters/maps/googleGeocode";
 
 const CACHE_PREFIX = "itinerary";
 const DEFAULT_CACHE_TTL_SECONDS = 60 * 60; // 1 hour cache window
 const LLM_LOCATION_CONFIDENCE_THRESHOLD = 0.45;
 const LLM_LOCATION_MIN_CONFIDENCE = 0.35;
 const AI_LOCATION_NOTE = "位置信息由AI辅助推断，请注意核实。";
+const STREET_VIEW_CONFIDENCE_THRESHOLD = 0.8;
+const GEOCODED_CONFIDENCE = 0.85;
+const NAME_BASED_PHOTO_CONFIDENCE_THRESHOLD = 0.8;
+const MAX_NAME_BASED_PHOTOS = 4;
 
 function createCacheKey(params: GenerateItineraryInput): string {
   const normalized = JSON.stringify(params);
@@ -24,6 +32,12 @@ function createCacheKey(params: GenerateItineraryInput): string {
 type ItineraryServiceDeps = {
   llm: LLMClient;
   maps: MapsClient;
+};
+
+type ResolvedCoordinate = {
+  lat: number;
+  lng: number;
+  source: "existing" | "geocoded";
 };
 
 type BudgetAccumulator = {
@@ -121,6 +135,14 @@ function appendNote(base: string | undefined, addition: string): string {
   }
 
   return base.includes(addition) ? base : `${base}（${addition}）`;
+}
+
+function containsHanCharacters(value: string | undefined | null): boolean {
+  if (!value) {
+    return false;
+  }
+
+  return /[\p{Script=Han}]/u.test(value);
 }
 
 function hasValidCoordinates(activity: Activity): boolean {
@@ -263,6 +285,7 @@ export class ItineraryService {
   private readonly maps: MapsClient;
   private readonly redis?: Redis;
   private readonly cacheTtl: number;
+  private readonly googleMapsApiKey?: string;
 
   constructor({ llm, maps }: ItineraryServiceDeps) {
     this.llm = llm;
@@ -275,6 +298,7 @@ export class ItineraryService {
     }
 
     this.cacheTtl = DEFAULT_CACHE_TTL_SECONDS;
+    this.googleMapsApiKey = env.GOOGLE_MAPS_API_KEY ?? env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? undefined;
   }
 
   async generate(params: GenerateItineraryInput): Promise<Itinerary> {
@@ -309,7 +333,12 @@ export class ItineraryService {
           originalActivities: day.activities,
           enrichedActivities
         });
-        enrichedDailyPlan.push({ ...day, activities: refinedActivities });
+        const activitiesWithStreetView = await this.attachStreetViewPhotosIfNeeded(refinedActivities);
+        const activitiesWithNamePhotos = await this.attachNameBasedPhotosIfNeeded(
+          validated.destination,
+          activitiesWithStreetView
+        );
+        enrichedDailyPlan.push({ ...day, activities: activitiesWithNamePhotos });
       } catch (error) {
         if (process.env.NODE_ENV !== "production") {
           console.warn("[ItineraryService] Activity enrichment failed", error);
@@ -445,5 +474,311 @@ export class ItineraryService {
       address: activity.address ?? result.addressHint,
       note
     };
+  }
+
+  private async attachStreetViewPhotosIfNeeded(activities: Activity[]): Promise<Activity[]> {
+    if (!this.googleMapsApiKey) {
+      return activities;
+    }
+
+    const coordinateCache = new Map<string, ResolvedCoordinate | null>();
+    const cache = new Map<string, StreetViewFetchResult>();
+
+    const results: Activity[] = [];
+
+    for (const activity of activities) {
+      const resolved = await this.resolveStreetViewCoordinate(activity, coordinateCache);
+
+      if (!resolved) {
+        results.push(activity);
+        continue;
+      }
+
+      const coordinate = { lat: resolved.lat, lng: resolved.lng };
+
+      if (isCoordinateInChina(coordinate)) {
+        results.push(activity);
+        continue;
+      }
+
+      let effectiveConfidence =
+        typeof activity.maps_confidence === "number" && Number.isFinite(activity.maps_confidence)
+          ? activity.maps_confidence
+          : 0;
+
+      if (resolved.source === "geocoded" && effectiveConfidence < GEOCODED_CONFIDENCE) {
+        effectiveConfidence = GEOCODED_CONFIDENCE;
+      }
+
+      if (effectiveConfidence < STREET_VIEW_CONFIDENCE_THRESHOLD) {
+        const updated = hasValidCoordinates(activity)
+          ? { ...activity, maps_confidence: effectiveConfidence }
+          : {
+              ...activity,
+              lat: coordinate.lat,
+              lng: coordinate.lng,
+              maps_confidence: effectiveConfidence
+            };
+        results.push(updated);
+        continue;
+      }
+
+      const existingPhotos = Array.isArray(activity.photos) ? [...activity.photos] : [];
+
+      if (existingPhotos.length >= 6) {
+        results.push({ ...activity, maps_confidence: effectiveConfidence });
+        continue;
+      }
+
+      const cacheKey = `${coordinate.lat.toFixed(6)},${coordinate.lng.toFixed(6)}`;
+
+      let streetViewResult = cache.get(cacheKey);
+
+      if (!streetViewResult) {
+        streetViewResult = await fetchStreetViewImage({
+          lat: coordinate.lat,
+          lng: coordinate.lng,
+          apiKey: this.googleMapsApiKey,
+          size: "640x640",
+          source: "outdoor"
+        });
+        cache.set(cacheKey, streetViewResult);
+      }
+
+      const baseActivity = hasValidCoordinates(activity)
+        ? { ...activity, maps_confidence: effectiveConfidence }
+        : {
+            ...activity,
+            lat: coordinate.lat,
+            lng: coordinate.lng,
+            maps_confidence: effectiveConfidence
+          };
+
+      if (!streetViewResult.url) {
+        const status = streetViewResult.status || "UNKNOWN";
+        const note = appendNote(baseActivity.note, `未能获取 Google 街景（状态：${status}）`);
+        results.push({
+          ...baseActivity,
+          note
+        });
+        continue;
+      }
+
+      if (!existingPhotos.includes(streetViewResult.url)) {
+        existingPhotos.push(streetViewResult.url);
+      }
+
+      const nextPhotos = existingPhotos.slice(0, 6);
+      const note = appendNote(baseActivity.note, "附加了 Google 街景图像，请确认实际情况。");
+
+      results.push({
+        ...baseActivity,
+        photos: nextPhotos,
+        note
+      });
+    }
+
+    return results;
+  }
+
+  private async attachNameBasedPhotosIfNeeded(
+    destination: string,
+    activities: Activity[]
+  ): Promise<Activity[]> {
+    if (!this.googleMapsApiKey) {
+      return activities;
+    }
+
+    const language = this.preferredGoogleLanguage(destination);
+    const photoCache = new Map<string, string[] | null>();
+    const results: Activity[] = [];
+
+    for (const activity of activities) {
+      if (!this.shouldSearchPhotosByName(destination, activity)) {
+        results.push(activity);
+        continue;
+      }
+
+      const title = activity.title?.trim();
+
+      if (!title) {
+        results.push(activity);
+        continue;
+      }
+
+      const cacheKey = title.toLowerCase();
+      let cachedPhotos = photoCache.get(cacheKey);
+
+      if (cachedPhotos === undefined) {
+        try {
+          const response = await searchPlacePhotosByName({
+            query: title,
+            destinationHint: destination,
+            apiKey: this.googleMapsApiKey,
+            language,
+            maxResults: MAX_NAME_BASED_PHOTOS
+          });
+
+          cachedPhotos = response?.photos ?? null;
+        } catch (error) {
+          cachedPhotos = null;
+
+          if (process.env.NODE_ENV !== "production") {
+            console.warn("[ItineraryService] Name-based photo search failed", {
+              destination,
+              title,
+              error
+            });
+          }
+        }
+
+        photoCache.set(cacheKey, cachedPhotos);
+      }
+
+      if (cachedPhotos && cachedPhotos.length > 0) {
+        const nextPhotos = cachedPhotos.slice(0, MAX_NAME_BASED_PHOTOS);
+        const note = appendNote(activity.note, "根据活动名称附加了 Google 图片，请确认准确性。");
+
+        results.push({
+          ...activity,
+          photos: nextPhotos,
+          note
+        });
+        continue;
+      }
+
+      results.push(activity);
+    }
+
+    return results;
+  }
+
+  private shouldSearchPhotosByName(destination: string, activity: Activity): boolean {
+    if (!activity.title || activity.title.trim().length === 0) {
+      return false;
+    }
+
+    if (Array.isArray(activity.photos) && activity.photos.length > 0) {
+      return false;
+    }
+
+    if (hasValidCoordinates(activity)) {
+      return false;
+    }
+
+    if (activity.address && activity.address.trim().length > 0) {
+      return false;
+    }
+
+    const confidence =
+      typeof activity.maps_confidence === "number" && Number.isFinite(activity.maps_confidence)
+        ? activity.maps_confidence
+        : 0;
+
+    if (confidence < NAME_BASED_PHOTO_CONFIDENCE_THRESHOLD) {
+      return false;
+    }
+
+    return this.isLikelyInternationalDestination(destination) || !containsHanCharacters(activity.title);
+  }
+
+  private isLikelyInternationalDestination(destination: string): boolean {
+    if (!destination) {
+      return false;
+    }
+
+    const normalized = destination.trim().toLowerCase();
+
+    const domesticKeywords = [
+      "china",
+      "people's republic",
+      "prc",
+      "hong kong",
+      "hongkong",
+      "macau",
+      "macao",
+      "taiwan",
+      "taipei",
+      "shanghai",
+      "beijing",
+      "guangzhou",
+      "shenzhen",
+      "chengdu",
+      "chongqing"
+    ];
+
+    for (const keyword of domesticKeywords) {
+      if (normalized.includes(keyword)) {
+        return false;
+      }
+    }
+
+    if (/中国|內地|内地|大陆|北京|上海|广州|深圳|成都|重庆|香港|澳门|台北|台湾/.test(destination)) {
+      return false;
+    }
+
+    return true;
+  }
+
+  private preferredGoogleLanguage(destination: string): string {
+    return containsHanCharacters(destination) ? "zh-CN" : "en";
+  }
+
+  private async resolveStreetViewCoordinate(
+    activity: Activity,
+    cache: Map<string, ResolvedCoordinate | null>
+  ): Promise<ResolvedCoordinate | null> {
+    if (hasValidCoordinates(activity)) {
+      return { lat: activity.lat as number, lng: activity.lng as number, source: "existing" };
+    }
+
+    const addressCandidates = [activity.address, this.extractAddressFromNote(activity.note)]
+      .map((value) => value?.trim())
+      .filter((value): value is string => Boolean(value));
+
+    if (addressCandidates.length === 0) {
+      return null;
+    }
+
+    for (const address of addressCandidates) {
+      const cacheKey = address.toLowerCase();
+
+      if (cache.has(cacheKey)) {
+        const cached = cache.get(cacheKey);
+        if (cached) {
+          return cached;
+        }
+        continue;
+      }
+
+      const geocoded = await geocodeAddressWithGoogle({
+        address,
+        apiKey: this.googleMapsApiKey!,
+        language: "zh-CN"
+      });
+
+      if (geocoded) {
+        const resolved: ResolvedCoordinate = {
+          lat: geocoded.lat,
+          lng: geocoded.lng,
+          source: "geocoded"
+        };
+        cache.set(cacheKey, resolved);
+        return resolved;
+      }
+
+      cache.set(cacheKey, null);
+    }
+
+    return null;
+  }
+
+  private extractAddressFromNote(note?: string | null): string | null {
+    if (!note) {
+      return null;
+    }
+
+    const match = note.match(/([\p{Script=Han}\w\s、，。·\-（）()]+\d+[号弄]?)/u);
+    return match ? match[0] : null;
   }
 }

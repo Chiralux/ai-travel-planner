@@ -7,6 +7,7 @@ const envSchema = z.object({
   NEXT_PUBLIC_AMAP_SECURITY_JS_CODE: z.string().optional(),
   NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: z.string().optional(),
   AMAP_REST_KEY: z.string().optional(),
+  GOOGLE_MAPS_API_KEY: z.string().optional(),
   BAIDU_MAP_AK: z.string().optional(),
   MAPS_PROVIDER: z.string().optional(),
   AI_PROVIDER: z.string().optional(),
@@ -23,7 +24,8 @@ const envSchema = z.object({
   NEXT_TELEMETRY_DISABLED: z.string().optional(),
   REDIS_URL: z.string().optional(),
   LOGTAIL_SOURCE_TOKEN: z.string().optional(),
-  OPENAI_API_KEY: z.string().optional()
+  OPENAI_API_KEY: z.string().optional(),
+  GOOGLE_MAPS_PROXY_URL: z.string().optional()
 });
 
 export type AppEnv = z.infer<typeof envSchema>;
