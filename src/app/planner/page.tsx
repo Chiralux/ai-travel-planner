@@ -238,6 +238,13 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
   const [navigationCustomOrigin, setNavigationCustomOrigin] = useState<{ lat: string; lng: string; label: string }>(
     () => ({ lat: "", lng: "", label: "" })
   );
+  const [originSuggestions, setOriginSuggestions] = useState<
+    Array<{ id: string; name: string; subtitle?: string; lat: number; lng: number }>
+  >([]);
+  const [originLoading, setOriginLoading] = useState(false);
+  const [originError, setOriginError] = useState<string | null>(null);
+  const [originSelectMode, setOriginSelectMode] = useState(false);
+  const [originSelection, setOriginSelection] = useState<{ lat: number; lng: number } | null>(null);
   const [customOriginQuery, setCustomOriginQuery] = useState("");
   const [customOriginSuggestions, setCustomOriginSuggestions] = useState<
     Array<{ id: string; name: string; subtitle?: string; lat: number; lng: number }>
@@ -249,6 +256,7 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
   const latestParseIdRef = useRef(0);
   const hasTriedLocateRef = useRef(false);
   const lastLocatedOriginRef = useRef<{ lat: number; lng: number; label?: string; address?: string } | null>(null);
+  const suppressOriginFetchRef = useRef(false);
   const suppressCustomOriginFetchRef = useRef(false);
   const mapSectionRef = useRef<HTMLDivElement | null>(null);
   const latestNavigationAttemptRef = useRef(0);
@@ -422,8 +430,14 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
         }
 
         if (shouldUpdateOriginField && cachedOrigin.label && form.origin?.trim() !== cachedOrigin.label) {
+          suppressOriginFetchRef.current = true;
           setField("origin", cachedOrigin.label);
         }
+
+        setOriginSelection({ lat: cachedOrigin.lat, lng: cachedOrigin.lng });
+        setOriginSelectMode(false);
+        setOriginSuggestions([]);
+        setOriginError(null);
 
         if (!options?.silent) {
           setLocationStatus(`已定位：${normalizedLabel}`);
@@ -510,8 +524,14 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
         }
 
         if (shouldUpdateOriginField && resolvedLabel && form.origin?.trim() !== resolvedLabel) {
+          suppressOriginFetchRef.current = true;
           setField("origin", resolvedLabel);
         }
+
+        setOriginSelection({ lat: latitude, lng: longitude });
+        setOriginSelectMode(false);
+        setOriginSuggestions([]);
+        setOriginError(null);
 
         if (!options?.silent) {
           setLocationStatus(`已定位：${resolvedLabel}`);
@@ -554,13 +574,18 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
       form.originCoords,
       setField,
       setLocationStatus,
-      accessToken
+      accessToken,
+      setOriginSelection,
+      setOriginSelectMode,
+      setOriginSuggestions,
+      setOriginError
     ]
   );
 
   const handleNavigationOriginChange = useCallback(
     (option: NavigationOriginOption) => {
       setNavigationOriginOption(option);
+      setOriginSelectMode(false);
 
       if (option === "current-location") {
         void detectCurrentOrigin({ updateEmptyOrigin: true });
@@ -578,7 +603,7 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
         setCustomOriginSelection(null);
       }
     },
-    [detectCurrentOrigin, navigationCustomOrigin.label]
+    [detectCurrentOrigin, navigationCustomOrigin.label, setOriginSelectMode]
   );
 
 
@@ -597,6 +622,10 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
     setSmartInputMessage(null);
     setVoiceMessage(null);
     setLocationStatus(null);
+    setOriginSuggestions([]);
+    setOriginError(null);
+    setOriginSelection(null);
+    setOriginSelectMode(false);
     detectCurrentOrigin({ updateEmptyOrigin: true });
   }, [
     detectCurrentOrigin,
@@ -605,7 +634,11 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
     setLocationStatus,
     setSmartInput,
     setSmartInputMessage,
-    setVoiceMessage
+    setVoiceMessage,
+    setOriginSuggestions,
+    setOriginError,
+    setOriginSelection,
+    setOriginSelectMode
   ]);
 
   const handleVoiceText = (text: string) => {
@@ -1224,6 +1257,190 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
     });
   }, [navigationMode, handleNavigateToActivity]);
 
+  useEffect(() => {
+    if (form.originCoords) {
+      setOriginSelection(form.originCoords);
+    } else {
+      setOriginSelection(null);
+    }
+  }, [form.originCoords, setOriginSelection]);
+
+  const fetchOriginSuggestions = useCallback(
+    async (query: string) => {
+      const trimmed = query.trim();
+
+      if (trimmed.length === 0) {
+        setOriginSuggestions([]);
+        setOriginError(null);
+        return;
+      }
+
+      setOriginLoading(true);
+      setOriginError(null);
+
+      try {
+        const params = new URLSearchParams({ q: trimmed });
+        const response = await fetch(`/api/geocode/forward?${params.toString()}`);
+        const json = await response.json();
+
+        if (!response.ok || !json?.ok) {
+          throw new Error(json?.error ?? "地点搜索失败，请稍后再试。");
+        }
+
+        const suggestions = (json.data?.suggestions ?? []) as Array<{
+          id: string;
+          name: string;
+          subtitle?: string;
+          lat: number;
+          lng: number;
+        }>;
+
+        setOriginSuggestions(suggestions.slice(0, 10));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "地点搜索失败，请稍后再试。";
+        setOriginError(message);
+      } finally {
+        setOriginLoading(false);
+      }
+    },
+    []
+  );
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      if (suppressOriginFetchRef.current) {
+        suppressOriginFetchRef.current = false;
+        return;
+      }
+
+      void fetchOriginSuggestions(form.origin ?? "");
+    }, 350);
+
+    return () => {
+      clearTimeout(handler);
+    };
+  }, [form.origin, fetchOriginSuggestions]);
+
+  const handleOriginSelect = useCallback(
+    (suggestion: { id: string; name: string; subtitle?: string; lat: number; lng: number }) => {
+      const displayLabel = suggestion.subtitle ? `${suggestion.name}（${suggestion.subtitle}）` : suggestion.name;
+
+      suppressOriginFetchRef.current = true;
+      setField("origin", displayLabel);
+      setField("originCoords", { lat: suggestion.lat, lng: suggestion.lng });
+      setOriginSelection({ lat: suggestion.lat, lng: suggestion.lng });
+      setOriginSelectMode(false);
+      setOriginSuggestions([]);
+      setOriginError(null);
+      setLocationStatus(`出发地：${displayLabel}`);
+
+      lastLocatedOriginRef.current = {
+        lat: suggestion.lat,
+        lng: suggestion.lng,
+        label: displayLabel,
+        address: suggestion.subtitle ?? displayLabel
+      };
+    },
+    [setField, setOriginSelection, setOriginSelectMode, setOriginSuggestions, setOriginError, setLocationStatus]
+  );
+
+  const handleOriginMapSelect = useCallback(
+    async (point: { lat: number; lng: number }) => {
+      setOriginSelection(point);
+      setField("originCoords", { lat: point.lat, lng: point.lng });
+
+      let resolvedLabel: string | null = null;
+      const suggestions: Array<{ id: string; name: string; subtitle?: string; lat: number; lng: number }> = [];
+
+      try {
+        const params = new URLSearchParams({ lat: String(point.lat), lng: String(point.lng) });
+        const headers: Record<string, string> = {};
+
+        if (accessToken) {
+          headers.Authorization = `Bearer ${accessToken}`;
+        }
+
+        const response = await fetch(`/api/geocode/reverse?${params.toString()}`, {
+          headers: Object.keys(headers).length > 0 ? headers : undefined
+        });
+        const json = await response.json();
+
+        if (response.ok && json?.ok) {
+          resolvedLabel = json.data?.label ?? json.data?.formattedAddress ?? "地图选点";
+          const label = resolvedLabel ?? "地图选点";
+          suggestions.push({
+            id: "reverse-geocode",
+            name: label,
+            subtitle:
+              json.data?.formattedAddress && json.data?.formattedAddress !== resolvedLabel
+                ? json.data.formattedAddress
+                : undefined,
+            lat: point.lat,
+            lng: point.lng
+          });
+          resolvedLabel = label;
+        } else {
+          resolvedLabel = null;
+        }
+      } catch (error) {
+        console.error("Failed to reverse geocode origin", error);
+        resolvedLabel = null;
+      } finally {
+        setOriginSelectMode(false);
+      }
+
+      try {
+        const keywords = resolvedLabel ?? `经纬度 ${point.lat.toFixed(4)},${point.lng.toFixed(4)}`;
+        const params = new URLSearchParams({ q: keywords });
+        const response = await fetch(`/api/geocode/forward?${params.toString()}`);
+        const json = await response.json();
+
+        if (response.ok && json?.ok) {
+          const forwardSuggestions = (json.data?.suggestions ?? []) as Array<{
+            id: string;
+            name: string;
+            subtitle?: string;
+            lat: number;
+            lng: number;
+          }>;
+
+          suggestions.push(
+            ...forwardSuggestions.map((item) => ({
+              ...item,
+              id: `search-${item.id}`
+            }))
+          );
+        }
+      } catch (error) {
+        console.warn("Failed to fetch forward suggestions after origin map select", error);
+      }
+
+      const displayLabel = resolvedLabel ?? `Lat ${point.lat.toFixed(4)}, Lng ${point.lng.toFixed(4)}`;
+
+      suppressOriginFetchRef.current = true;
+      setField("origin", displayLabel);
+      setOriginSuggestions(suggestions);
+      setOriginError(null);
+      setLocationStatus(`出发地：${displayLabel}`);
+
+      lastLocatedOriginRef.current = {
+        lat: point.lat,
+        lng: point.lng,
+        label: displayLabel,
+        address: suggestions[0]?.subtitle ?? displayLabel
+      };
+    },
+    [
+      setField,
+      setOriginSelection,
+      setOriginSelectMode,
+      setOriginSuggestions,
+      setOriginError,
+      setLocationStatus,
+      accessToken
+    ]
+  );
+
   const fetchCustomOriginSuggestions = useCallback(
     async (query: string) => {
       const trimmed = query.trim();
@@ -1435,35 +1652,70 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
 
           <label className="flex flex-col gap-2">
             <span className="text-sm font-medium text-slate-200">出发地</span>
-            <div className="flex flex-wrap gap-2">
-              <input
-                type="text"
-                value={form.origin ?? ""}
-                onChange={(event) => {
-                  const value = event.target.value;
-                  setField("origin", value);
-                  setLocationStatus(value.trim().length > 0 ? `出发地：${value.trim()}` : "您可以定位或填写出发地");
-                }}
-                onBlur={(event) => {
-                  if (!event.target.value.trim()) {
-                    detectCurrentOrigin({ updateEmptyOrigin: true });
-                  }
-                }}
-                className="flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 focus:border-blue-500 focus:outline-none"
-                placeholder="定位或手动填写出发地"
-              />
-              <button
-                type="button"
-                onClick={() => {
-                  void detectCurrentOrigin();
-                }}
-                className="rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-200 transition hover:border-blue-500 hover:text-blue-300"
-                disabled={locating}
-              >
-                {locating ? "定位中..." : "重新定位"}
-              </button>
+            <div className="flex flex-col gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  type="text"
+                  value={form.origin ?? ""}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setField("origin", value);
+                    setLocationStatus(value.trim().length > 0 ? `出发地：${value.trim()}` : "您可以定位或填写出发地");
+                    suppressOriginFetchRef.current = false;
+                  }}
+                  onBlur={(event) => {
+                    if (!event.target.value.trim()) {
+                      detectCurrentOrigin({ updateEmptyOrigin: true });
+                    }
+                  }}
+                  className="flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 focus:border-blue-500 focus:outline-none"
+                  placeholder="定位或手动填写出发地"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    void detectCurrentOrigin();
+                  }}
+                  className="rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-200 transition hover:border-blue-500 hover:text-blue-300"
+                  disabled={locating}
+                >
+                  {locating ? "定位中..." : "重新定位"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setOriginSelectMode((prev) => !prev)}
+                  className={`rounded-lg border px-3 py-2 text-sm transition ${
+                    originSelectMode
+                      ? "border-emerald-400 bg-emerald-500/20 text-emerald-100"
+                      : "border-slate-700 bg-slate-950 text-slate-200 hover:border-emerald-400 hover:text-emerald-100"
+                  }`}
+                >
+                  {originSelectMode ? "点击地图选择中" : "在地图上选点"}
+                </button>
+              </div>
+              {originError && <p className="text-xs text-red-400">{originError}</p>}
+              {originLoading && <p className="text-xs text-slate-500">正在搜索出发地...</p>}
+              {!originLoading && originSuggestions.length > 0 && (
+                <ul className="max-h-48 overflow-y-auto rounded border border-slate-800 bg-slate-950/70 text-slate-200">
+                  {originSuggestions.map((suggestion) => (
+                    <li key={suggestion.id}>
+                      <button
+                        type="button"
+                        onClick={() => handleOriginSelect(suggestion)}
+                        className="flex w-full flex-col items-start gap-1 border-b border-slate-800 px-3 py-2 text-left hover:bg-slate-800/60"
+                      >
+                        <span className="text-sm font-medium text-white">{suggestion.name}</span>
+                        {suggestion.subtitle && <span className="text-xs text-slate-400">{suggestion.subtitle}</span>}
+                        <span className="text-[11px] text-slate-500">
+                          {suggestion.lat.toFixed(4)}, {suggestion.lng.toFixed(4)}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {locationStatus && <p className="text-xs text-slate-400">{locationStatus}</p>}
             </div>
-            {locationStatus && <p className="text-xs text-slate-400">{locationStatus}</p>}
           </label>
 
           <label className="flex flex-col gap-2">
@@ -1871,9 +2123,17 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
               markers={markers}
               focusedMarker={focusedMarker ?? undefined}
               route={routeForMap}
-              selecting={navigationOriginOption === "custom" && customOriginSelectMode}
-              onSelectPoint={navigationOriginOption === "custom" && customOriginSelectMode ? handleCustomOriginMapSelect : undefined}
-              selectionPoint={navigationOriginOption === "custom" ? customOriginSelection : null}
+              selecting={originSelectMode || (navigationOriginOption === "custom" && customOriginSelectMode)}
+              onSelectPoint={(() => {
+                if (originSelectMode) {
+                  return handleOriginMapSelect;
+                }
+                if (navigationOriginOption === "custom" && customOriginSelectMode) {
+                  return handleCustomOriginMapSelect;
+                }
+                return undefined;
+              })()}
+              selectionPoint={originSelectMode ? originSelection : navigationOriginOption === "custom" ? customOriginSelection : null}
             />
           </div>
           {navigationStatus && (
