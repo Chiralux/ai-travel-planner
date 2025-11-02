@@ -51,6 +51,8 @@ declare global {
 const DEFAULT_CENTER: [number, number] = [116.397389, 39.908722];
 const DEFAULT_ZOOM_EMPTY = 3;
 const DEFAULT_GOOGLE_ZOOM_EMPTY = 2;
+const GOOGLE_BOUNDS_PADDING_DEFAULT = { top: 72, right: 80, bottom: 96, left: 80 } as const;
+const GOOGLE_BOUNDS_PADDING_COMPACT = { top: 40, right: 48, bottom: 64, left: 48 } as const;
 
 const isDev = process.env.NODE_ENV !== "production";
 const debug = (...args: unknown[]) => {
@@ -193,6 +195,10 @@ export function MapView({
   const [googleReady, setGoogleReady] = useState(false);
   const isGoogleProvider = provider === "google";
   const providerLabel = isGoogleProvider ? "Google Maps" : "高德地图";
+  const googleBoundsPadding = useMemo(() => {
+    const preset = compact ? GOOGLE_BOUNDS_PADDING_COMPACT : GOOGLE_BOUNDS_PADDING_DEFAULT;
+    return { ...preset };
+  }, [compact]);
 
   useEffect(() => {
     setStatus("loading");
@@ -539,7 +545,7 @@ export function MapView({
 
     if (hasActiveRoute) {
       if (googleRouteBoundsRef.current) {
-        map.fitBounds(googleRouteBoundsRef.current);
+        map.fitBounds(googleRouteBoundsRef.current, googleBoundsPadding);
       }
       return;
     }
@@ -557,10 +563,10 @@ export function MapView({
       });
 
       if (!bounds.isEmpty?.()) {
-        map.fitBounds(bounds);
+        map.fitBounds(bounds, googleBoundsPadding);
       }
     }
-  }, [isGoogleProvider, googleReady, validMarkers, showInfoWindow, route]);
+  }, [isGoogleProvider, googleReady, validMarkers, showInfoWindow, route, googleBoundsPadding]);
 
   useEffect(() => {
     if (!isGoogleProvider) {
@@ -930,19 +936,13 @@ export function MapView({
     googleRouteBoundsRef.current = (function buildBounds() {
       const bounds = new googleGlobal.maps.LatLngBounds();
       pathPoints.forEach((point) => bounds.extend(new googleGlobal.maps.LatLng(point.lat, point.lng)));
-      googleMarkersRef.current.forEach(({ marker }) => {
-        const position = marker.getPosition?.();
-        if (position) {
-          bounds.extend(position);
-        }
-      });
       return bounds.isEmpty?.() ? null : bounds;
     })();
 
     if (googleRouteBoundsRef.current) {
-      map.fitBounds(googleRouteBoundsRef.current);
+      map.fitBounds(googleRouteBoundsRef.current, googleBoundsPadding);
     }
-  }, [isGoogleProvider, googleReady, route]);
+  }, [isGoogleProvider, googleReady, route, googleBoundsPadding]);
 
   useEffect(() => {
     if (provider !== "amap") {
@@ -1033,8 +1033,15 @@ export function MapView({
     }
 
     const position = new googleGlobal.maps.LatLng(focusedMarker.lat, focusedMarker.lng);
-    if (googleRouteBoundsRef.current) {
-      map.fitBounds(googleRouteBoundsRef.current);
+    const hasActiveRoute = Array.isArray(route?.points) && route.points.length >= 2;
+
+    if (hasActiveRoute) {
+      map.panTo(position);
+      const currentZoom = map.getZoom?.();
+      const targetZoom = typeof currentZoom === "number" ? Math.max(currentZoom, 13) : 13;
+      map.setZoom(targetZoom);
+    } else if (googleRouteBoundsRef.current) {
+      map.fitBounds(googleRouteBoundsRef.current, googleBoundsPadding);
     } else {
       map.panTo(position);
       const currentZoom = map.getZoom?.();
@@ -1090,7 +1097,7 @@ export function MapView({
       infoWindow.setPosition(position);
       infoWindow.open({ map });
     }
-  }, [isGoogleProvider, googleReady, focusedMarker, showInfoWindow]);
+  }, [isGoogleProvider, googleReady, focusedMarker, showInfoWindow, googleBoundsPadding, route]);
 
   useEffect(() => {
     if (provider !== "amap") {
