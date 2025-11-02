@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { MapProvider } from "../../src/lib/maps/provider";
 import type { Activity, Itinerary } from "../../src/core/validation/itinerarySchema";
 
 export type PlannerForm = {
@@ -28,6 +29,7 @@ export type PlannerRoute = {
   origin?: FocusableMarker;
   destination?: FocusableMarker;
   mode: "driving" | "walking" | "cycling" | "transit";
+  provider?: MapProvider;
 };
 
 type PlannerState = {

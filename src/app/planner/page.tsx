@@ -14,9 +14,15 @@ import {
   type PlannerRoute
 } from "../../../lib/store/usePlannerStore";
 import { mergeParsedInput, parseTravelInput as localParseTravelInput } from "../../core/utils/travelInputParser";
+import { pickMapProvider, type MapProvider } from "../../lib/maps/provider";
 import { useSupabaseAuth } from "../../lib/supabase/AuthProvider";
 
 const preferenceOptions = ["美食", "文化", "户外", "亲子", "夜生活", "艺术"];
+const GOOGLE_MAPS_AVAILABLE = Boolean(process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY);
+const MAP_PROVIDER_LABELS: Record<MapProvider, string> = {
+  amap: "高德地图",
+  google: "Google Maps"
+};
 
 type PlanSummary = {
   id: string;
@@ -26,7 +32,7 @@ type PlanSummary = {
   updatedAt: string;
 };
 
-type FloatingMapOverlayProps = Pick<ComponentProps<typeof MapView>, "markers" | "focusedMarker" | "route"> & {
+type FloatingMapOverlayProps = Pick<ComponentProps<typeof MapView>, "markers" | "focusedMarker" | "route" | "provider"> & {
   onScrollToMap: () => void;
 };
 
@@ -52,7 +58,7 @@ const NAVIGATION_ORIGIN_LABELS: Record<NavigationOriginOption, string> = {
   custom: "自定义起点"
 };
 
-function FloatingMapOverlay({ markers, focusedMarker, route, onScrollToMap }: FloatingMapOverlayProps) {
+function FloatingMapOverlay({ markers, focusedMarker, route, provider, onScrollToMap }: FloatingMapOverlayProps) {
   const [container, setContainer] = useState<HTMLElement | null>(null);
 
   useEffect(() => {
@@ -94,7 +100,14 @@ function FloatingMapOverlay({ markers, focusedMarker, route, onScrollToMap }: Fl
             回到地图
           </button>
         </div>
-        <MapView markers={markers} focusedMarker={focusedMarker} compact showInfoWindow={false} route={route} />
+        <MapView
+          markers={markers}
+          focusedMarker={focusedMarker}
+          compact
+          showInfoWindow={false}
+          route={route}
+          provider={provider}
+        />
       </div>
     </div>,
     container
@@ -262,6 +275,33 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
   const latestNavigationAttemptRef = useRef(0);
   const navigationModeLabel = NAVIGATION_MODE_LABELS[navigationMode];
   const navigationOriginLabel = NAVIGATION_ORIGIN_LABELS[navigationOriginOption];
+  const mapProvider = useMemo(() => {
+    const coords: Array<{ lat: number; lng: number }> = [];
+
+    for (const marker of markers) {
+      if (Number.isFinite(marker.lat) && Number.isFinite(marker.lng)) {
+        coords.push({ lat: marker.lat, lng: marker.lng });
+      }
+    }
+
+    if (
+      form.originCoords &&
+      Number.isFinite(form.originCoords.lat) &&
+      Number.isFinite(form.originCoords.lng)
+    ) {
+      coords.push({ lat: form.originCoords.lat, lng: form.originCoords.lng });
+    }
+
+    if (activeRoute?.points?.length) {
+      for (const point of activeRoute.points) {
+        if (Number.isFinite(point.lat) && Number.isFinite(point.lng)) {
+          coords.push(point);
+        }
+      }
+    }
+
+    return pickMapProvider(coords, { googleMapsAvailable: GOOGLE_MAPS_AVAILABLE });
+  }, [activeRoute?.points, markers, form.originCoords]);
 
   const knownPreferences = useMemo(
     () => Array.from(new Set([...preferenceOptions, ...form.preferences])),
@@ -1018,7 +1058,9 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
 
   const shouldShowFloatingMap = isClient && !isMapVisible && markers.length > 0;
   const hasMarkerHistory = focusHistory.length > 0;
-  const routeForMap = activeRoute ? { points: activeRoute.points } : null;
+  const routeForMap = activeRoute
+    ? { points: activeRoute.points, provider: activeRoute.provider }
+    : null;
   const activeRouteModeLabel = activeRoute ? NAVIGATION_MODE_LABELS[activeRoute.mode] : null;
 
   const floatingMapOverlay = shouldShowFloatingMap ? (
@@ -1026,6 +1068,7 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
       markers={markers}
       focusedMarker={focusedMarker ?? undefined}
       route={routeForMap}
+      provider={mapProvider}
       onScrollToMap={handleScrollToMap}
     />
   ) : null;
@@ -1142,7 +1185,18 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
       const requestId = options?.reuseExistingRequestId ?? latestNavigationAttemptRef.current + 1;
       latestNavigationAttemptRef.current = requestId;
       setNavigationLoading(true);
-  setNavigationStatus(`正在请求高德路线（${navigationModeLabel} · 起点：${navigationOriginLabel}）...`);
+      const provider = pickMapProvider(
+        [
+          { lat: origin.lat, lng: origin.lng },
+          { lat: activity.lat, lng: activity.lng }
+        ],
+        { googleMapsAvailable: GOOGLE_MAPS_AVAILABLE }
+      );
+      const providerLabel = MAP_PROVIDER_LABELS[provider] ?? "地图";
+
+      setNavigationStatus(
+        `正在请求${providerLabel}路线（${navigationModeLabel} · 起点：${navigationOriginLabel}）...`
+      );
 
       const headers: Record<string, string> = {
         "Content-Type": "application/json"
@@ -1158,10 +1212,12 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
           destination: { lat: number; lng: number };
           mode: PlannerRoute["mode"];
           strategy?: string;
+          provider: MapProvider;
         } = {
           origin: { lat: origin.lat, lng: origin.lng },
           destination: { lat: activity.lat, lng: activity.lng },
-          mode: navigationMode
+          mode: navigationMode,
+          provider
         };
 
         if (navigationMode === "driving") {
@@ -1186,10 +1242,13 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
           distanceMeters: number;
           durationSeconds: number;
           mode: PlannerRoute["mode"];
+          provider?: MapProvider;
         };
 
         const resolvedMode = data.mode ?? navigationMode;
         const resolvedModeLabel = NAVIGATION_MODE_LABELS[resolvedMode];
+        const resolvedProvider = data.provider ?? provider;
+        const resolvedProviderLabel = MAP_PROVIDER_LABELS[resolvedProvider] ?? providerLabel;
 
         setRoute({
           points: data.points,
@@ -1202,7 +1261,8 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
             label: activity.title,
             address: activity.address
           },
-          mode: resolvedMode
+          mode: resolvedMode,
+          provider: resolvedProvider
         });
 
         lastSuccessfulNavigationRef.current = { dayIndex, activityIndex };
@@ -1216,7 +1276,7 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
 
         setIsMapVisible(true);
         setNavigationStatus(
-          `路线已更新（${resolvedModeLabel} · 起点：${navigationOriginLabel}）：约 ${formatDistance(
+          `${resolvedProviderLabel} 路线已更新（${resolvedModeLabel} · 起点：${navigationOriginLabel}）：约 ${formatDistance(
             data.distanceMeters
           )}，预计耗时 ${formatDuration(data.durationSeconds)}。`
         );
@@ -1226,7 +1286,9 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
         }
 
         const message = error instanceof Error ? error.message : "路线请求失败，请稍后再试。";
-  setNavigationStatus(`${message}（${navigationModeLabel} · 起点：${navigationOriginLabel}）`);
+        setNavigationStatus(
+          `${message}（${providerLabel} · ${navigationModeLabel} · 起点：${navigationOriginLabel}）`
+        );
       } finally {
         if (latestNavigationAttemptRef.current === requestId) {
           setNavigationLoading(false);
@@ -2123,6 +2185,7 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
               markers={markers}
               focusedMarker={focusedMarker ?? undefined}
               route={routeForMap}
+              provider={mapProvider}
               selecting={originSelectMode || (navigationOriginOption === "custom" && customOriginSelectMode)}
               onSelectPoint={(() => {
                 if (originSelectMode) {

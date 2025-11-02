@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { MapProvider } from "../../src/lib/maps/provider";
 
 type Marker = {
   lat: number;
@@ -17,6 +18,7 @@ type Marker = {
 
 type RoutePath = {
   points: Array<{ lat: number; lng: number }>;
+  provider?: MapProvider | null;
 };
 
 type MapViewProps = {
@@ -30,6 +32,7 @@ type MapViewProps = {
   compact?: boolean;
   showInfoWindow?: boolean;
   route?: RoutePath | null;
+  provider?: MapProvider;
   selecting?: boolean;
   onSelectPoint?: (point: { lat: number; lng: number }) => void;
   selectionPoint?: { lat: number; lng: number } | null;
@@ -41,11 +44,13 @@ declare global {
     _AMapSecurityConfig?: {
       securityJsCode?: string;
     };
+    google?: any;
   }
 }
 
 const DEFAULT_CENTER: [number, number] = [116.397389, 39.908722];
 const DEFAULT_ZOOM_EMPTY = 3;
+const DEFAULT_GOOGLE_ZOOM_EMPTY = 2;
 
 const isDev = process.env.NODE_ENV !== "production";
 const debug = (...args: unknown[]) => {
@@ -155,6 +160,7 @@ export function MapView({
   compact = false,
   showInfoWindow = true,
   route = null,
+  provider = "amap",
   selecting = false,
   onSelectPoint,
   selectionPoint = null
@@ -165,18 +171,87 @@ export function MapView({
   const markerInstancesRef = useRef<Array<{ overlay: any; marker: Marker }>>([]);
   const routeOverlayRef = useRef<{ polyline?: any } | null>(null);
   const selectionOverlayRef = useRef<any>(null);
+  const googleMapRef = useRef<any>(null);
+  const googleMarkersRef = useRef<Array<{ marker: any; listeners: any[] }>>([]);
+  const googlePolylineRef = useRef<any>(null);
+  const googleInfoWindowRef = useRef<any>(null);
+  const googleSelectionMarkerRef = useRef<any>(null);
+  const googleClickListenerRef = useRef<any>(null);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const hasMountedRef = useRef(false);
 
   const token = useMemo(() => process.env.NEXT_PUBLIC_AMAP_WEB_KEY, []);
   const securityCode = useMemo(() => process.env.NEXT_PUBLIC_AMAP_SECURITY_JS_CODE, []);
+  const googleApiKey = useMemo(() => process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY, []);
   const validMarkers = useMemo(
     () => markers.filter((marker) => Number.isFinite(marker.lat) && Number.isFinite(marker.lng)),
     [markers]
   );
   const [sdkReady, setSdkReady] = useState(false);
+  const [googleReady, setGoogleReady] = useState(false);
+  const isGoogleProvider = provider === "google";
+  const providerLabel = isGoogleProvider ? "Google Maps" : "高德地图";
 
   useEffect(() => {
+    setStatus("loading");
+  }, [provider]);
+
+  const disposeGoogleResources = useCallback(() => {
+    const googleGlobal = typeof window !== "undefined" ? window.google : undefined;
+    const googleEvent = googleGlobal?.maps?.event;
+
+    googleMarkersRef.current.forEach(({ marker, listeners }) => {
+      listeners.forEach((listener) => {
+        try {
+          googleEvent?.removeListener?.(listener);
+        } catch {
+          /* ignore */
+        }
+      });
+      marker?.setMap?.(null);
+    });
+    googleMarkersRef.current = [];
+
+    if (googlePolylineRef.current) {
+      try {
+        googlePolylineRef.current.setMap?.(null);
+      } catch {
+        /* ignore */
+      }
+      googlePolylineRef.current = null;
+    }
+
+    if (googleSelectionMarkerRef.current) {
+      googleSelectionMarkerRef.current.setMap?.(null);
+      googleSelectionMarkerRef.current = null;
+    }
+
+    if (googleClickListenerRef.current) {
+      try {
+        googleEvent?.removeListener?.(googleClickListenerRef.current);
+      } catch {
+        /* ignore */
+      }
+    }
+    googleClickListenerRef.current = null;
+
+    if (googleInfoWindowRef.current?.close) {
+      try {
+        googleInfoWindowRef.current.close();
+      } catch {
+        /* ignore */
+      }
+    }
+    googleInfoWindowRef.current = null;
+    googleMapRef.current = null;
+    setGoogleReady(false);
+  }, []);
+
+  useEffect(() => {
+    if (provider !== "amap") {
+      return;
+    }
+
     async function initMap() {
       if (!containerRef.current) {
         debug("initMap: missing container element");
@@ -278,9 +353,304 @@ export function MapView({
       setSdkReady(false);
       debug("cleanup: disposed map");
     };
-  }, [token, securityCode]);
+  }, [provider, token, securityCode]);
 
   useEffect(() => {
+    if (!isGoogleProvider) {
+      disposeGoogleResources();
+      return;
+    }
+
+    if (!containerRef.current) {
+      debug("google init: missing container element");
+      return;
+    }
+
+    if (!googleApiKey) {
+      debug("google init: missing API key");
+      setStatus("error");
+      return;
+    }
+
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const initializeMap = () => {
+      const googleGlobal = window.google;
+
+      if (!googleGlobal?.maps) {
+        debug("google init: maps namespace unavailable after load");
+        setStatus("error");
+        return;
+      }
+
+      disposeGoogleResources();
+
+      const map = new googleGlobal.maps.Map(containerRef.current as HTMLElement, {
+        center: { lat: DEFAULT_CENTER[1], lng: DEFAULT_CENTER[0] },
+        zoom: DEFAULT_GOOGLE_ZOOM_EMPTY,
+        mapTypeControl: false,
+        streetViewControl: false,
+        fullscreenControl: true,
+        scaleControl: true
+      });
+
+      googleMapRef.current = map;
+      googleInfoWindowRef.current = null;
+
+      setStatus("ready");
+      setGoogleReady(true);
+    };
+
+    if (window.google?.maps) {
+      initializeMap();
+      return () => {
+        disposeGoogleResources();
+      };
+    }
+
+    let active = true;
+    const scriptId = "google-maps-sdk";
+    let script = document.getElementById(scriptId) as HTMLScriptElement | null;
+
+    const handleLoad = () => {
+      if (!active) {
+        return;
+      }
+      initializeMap();
+    };
+
+    const handleError = () => {
+      if (!active) {
+        return;
+      }
+      debug("google init: script load failed");
+      setStatus("error");
+    };
+
+    if (!script) {
+      script = document.createElement("script");
+      script.id = scriptId;
+      script.src = `https://maps.googleapis.com/maps/api/js?key=${googleApiKey}&language=zh-CN`;
+      script.async = true;
+      script.defer = true;
+      script.addEventListener("load", handleLoad);
+      script.addEventListener("error", handleError);
+      document.head.appendChild(script);
+    } else {
+      script.addEventListener("load", handleLoad);
+      script.addEventListener("error", handleError);
+    }
+
+    setStatus("loading");
+
+    return () => {
+      active = false;
+      if (script) {
+        script.removeEventListener("load", handleLoad);
+        script.removeEventListener("error", handleError);
+      }
+    };
+  }, [isGoogleProvider, googleApiKey, disposeGoogleResources]);
+
+  useEffect(() => {
+    if (!isGoogleProvider) {
+      return;
+    }
+
+    const googleGlobal = typeof window !== "undefined" ? window.google : undefined;
+    const map = googleMapRef.current;
+
+    if (!googleReady || !map || !googleGlobal?.maps) {
+      return;
+    }
+
+    const googleEvent = googleGlobal.maps.event;
+
+    if (!googleEvent) {
+      return;
+    }
+
+    googleMarkersRef.current.forEach(({ marker, listeners }) => {
+      listeners.forEach((listener) => {
+        try {
+          googleEvent?.removeListener?.(listener);
+        } catch {
+          /* ignore */
+        }
+      });
+      marker?.setMap?.(null);
+    });
+    googleMarkersRef.current = [];
+
+    if (showInfoWindow) {
+      if (!googleInfoWindowRef.current) {
+        googleInfoWindowRef.current = new googleGlobal.maps.InfoWindow();
+      }
+    } else if (googleInfoWindowRef.current?.close) {
+      googleInfoWindowRef.current.close();
+      googleInfoWindowRef.current = null;
+    }
+
+    if (validMarkers.length === 0) {
+      map.setCenter({ lat: DEFAULT_CENTER[1], lng: DEFAULT_CENTER[0] });
+      map.setZoom(DEFAULT_GOOGLE_ZOOM_EMPTY);
+      return;
+    }
+
+    const infoWindow = googleInfoWindowRef.current;
+    const nextMarkers: Array<{ marker: any; listeners: any[] }> = [];
+
+    for (const marker of validMarkers) {
+      const googleMarker = new googleGlobal.maps.Marker({
+        position: { lat: marker.lat, lng: marker.lng },
+        map,
+        title: marker.label,
+        label: marker.sequenceLabel
+      });
+
+      const listeners: any[] = [];
+
+      if (showInfoWindow && infoWindow) {
+        const content = buildInfoContent(marker);
+        listeners.push(
+          googleEvent.addListener(googleMarker, "mouseover", () => {
+            infoWindow.setContent(content);
+            infoWindow.open({ map, anchor: googleMarker });
+          })
+        );
+        listeners.push(
+          googleEvent.addListener(googleMarker, "mouseout", () => {
+            infoWindow.close();
+          })
+        );
+      }
+
+      nextMarkers.push({ marker: googleMarker, listeners });
+    }
+
+    googleMarkersRef.current = nextMarkers;
+
+    if (validMarkers.length === 1) {
+      const single = validMarkers[0];
+      map.setCenter({ lat: single.lat, lng: single.lng });
+      const currentZoom = map.getZoom?.();
+      const targetZoom = typeof currentZoom === "number" ? Math.max(currentZoom, 13) : 13;
+      map.setZoom(targetZoom);
+    } else {
+      const bounds = new googleGlobal.maps.LatLngBounds();
+      validMarkers.forEach((marker) => {
+        bounds.extend(new googleGlobal.maps.LatLng(marker.lat, marker.lng));
+      });
+
+      if (!bounds.isEmpty?.()) {
+        map.fitBounds(bounds);
+      }
+    }
+  }, [isGoogleProvider, googleReady, validMarkers, showInfoWindow]);
+
+  useEffect(() => {
+    if (!isGoogleProvider) {
+      return;
+    }
+
+    const googleGlobal = typeof window !== "undefined" ? window.google : undefined;
+    const map = googleMapRef.current;
+
+    if (!googleReady || !map || !googleGlobal?.maps) {
+      return;
+    }
+
+    if (googleSelectionMarkerRef.current) {
+      googleSelectionMarkerRef.current.setMap?.(null);
+      googleSelectionMarkerRef.current = null;
+    }
+
+    if (!selectionPoint || !Number.isFinite(selectionPoint.lat) || !Number.isFinite(selectionPoint.lng)) {
+      return;
+    }
+
+    googleSelectionMarkerRef.current = new googleGlobal.maps.Marker({
+      position: { lat: selectionPoint.lat, lng: selectionPoint.lng },
+      map,
+      icon: undefined
+    });
+  }, [isGoogleProvider, googleReady, selectionPoint]);
+
+  useEffect(() => {
+    if (!isGoogleProvider) {
+      return;
+    }
+
+    const googleGlobal = typeof window !== "undefined" ? window.google : undefined;
+    const map = googleMapRef.current;
+
+    if (!googleReady || !map || !googleGlobal?.maps) {
+      return;
+    }
+
+    const googleEvent = googleGlobal.maps.event;
+
+    if (!googleEvent?.addListener) {
+      return () => {
+        map.setOptions?.({ draggableCursor: undefined });
+      };
+    }
+
+    if (googleClickListenerRef.current) {
+      try {
+        googleEvent?.removeListener?.(googleClickListenerRef.current);
+      } catch {
+        /* ignore */
+      }
+      googleClickListenerRef.current = null;
+    }
+
+    if (!selecting) {
+      map.setOptions?.({ draggableCursor: undefined });
+      return;
+    }
+
+    map.setOptions?.({ draggableCursor: "crosshair" });
+
+  googleClickListenerRef.current = googleEvent.addListener(map, "click", (event: any) => {
+      if (!onSelectPoint) {
+        return;
+      }
+
+      const latLng = event?.latLng;
+
+      if (!latLng) {
+        return;
+      }
+
+      const lat = latLng.lat?.();
+      const lng = latLng.lng?.();
+
+      if (Number.isFinite(lat) && Number.isFinite(lng)) {
+        onSelectPoint({ lat, lng });
+      }
+    });
+
+    return () => {
+      map.setOptions?.({ draggableCursor: undefined });
+      if (googleClickListenerRef.current) {
+        try {
+          googleEvent?.removeListener?.(googleClickListenerRef.current);
+        } catch {
+          /* ignore */
+        }
+        googleClickListenerRef.current = null;
+      }
+    };
+  }, [isGoogleProvider, googleReady, selecting, onSelectPoint]);
+
+  useEffect(() => {
+    if (provider !== "amap") {
+      return;
+    }
+
     const map = mapRef.current;
     const AMapCtor = typeof window !== "undefined" && sdkReady ? window.AMap : undefined;
 
@@ -346,9 +716,13 @@ export function MapView({
       map.setFitView(instances.map((item) => item.overlay));
       debug("markers effect: fit view");
     }
-  }, [validMarkers, status, sdkReady, showInfoWindow]);
+  }, [provider, validMarkers, status, sdkReady, showInfoWindow]);
 
   useEffect(() => {
+    if (provider !== "amap") {
+      return;
+    }
+
     const map = mapRef.current;
     const AMapCtor = typeof window !== "undefined" && sdkReady ? window.AMap : undefined;
 
@@ -382,9 +756,13 @@ export function MapView({
         selectionOverlayRef.current = null;
       }
     };
-  }, [selectionPoint, sdkReady]);
+  }, [provider, selectionPoint, sdkReady]);
 
   useEffect(() => {
+    if (provider !== "amap") {
+      return;
+    }
+
     const map = mapRef.current;
     const AMapCtor = typeof window !== "undefined" && sdkReady ? window.AMap : undefined;
 
@@ -418,9 +796,13 @@ export function MapView({
         map.setCursor("default");
       }
     };
-  }, [selecting, sdkReady, onSelectPoint]);
+  }, [provider, selecting, sdkReady, onSelectPoint]);
 
   useEffect(() => {
+    if (provider !== "amap") {
+      return;
+    }
+
     const map = mapRef.current;
     const AMapCtor = typeof window !== "undefined" && sdkReady ? window.AMap : undefined;
 
@@ -467,9 +849,67 @@ export function MapView({
         routeOverlayRef.current = null;
       }
     };
-  }, [route, status, sdkReady]);
+  }, [provider, route, status, sdkReady]);
 
   useEffect(() => {
+    if (!isGoogleProvider) {
+      return;
+    }
+
+    const googleGlobal = typeof window !== "undefined" ? window.google : undefined;
+    const map = googleMapRef.current;
+
+    if (!googleReady || !map || !googleGlobal?.maps) {
+      return;
+    }
+
+    if (googlePolylineRef.current) {
+      try {
+        googlePolylineRef.current.setMap?.(null);
+      } catch {
+        /* ignore */
+      }
+      googlePolylineRef.current = null;
+    }
+
+    const pathPoints = (route?.points ?? []).filter(
+      (point) => Number.isFinite(point.lat) && Number.isFinite(point.lng)
+    );
+
+    if (pathPoints.length < 2) {
+      return;
+    }
+
+    const polyline = new googleGlobal.maps.Polyline({
+      path: pathPoints.map((point) => ({ lat: point.lat, lng: point.lng })),
+      geodesic: true,
+      strokeColor: "#38bdf8",
+      strokeOpacity: 0.85,
+      strokeWeight: 5
+    });
+
+    polyline.setMap(map);
+    googlePolylineRef.current = polyline;
+
+    const bounds = new googleGlobal.maps.LatLngBounds();
+    pathPoints.forEach((point) => bounds.extend(new googleGlobal.maps.LatLng(point.lat, point.lng)));
+    googleMarkersRef.current.forEach(({ marker }) => {
+      const position = marker.getPosition?.();
+      if (position) {
+        bounds.extend(position);
+      }
+    });
+
+    if (!bounds.isEmpty?.()) {
+      map.fitBounds(bounds);
+    }
+  }, [isGoogleProvider, googleReady, route]);
+
+  useEffect(() => {
+    if (provider !== "amap") {
+      return;
+    }
+
     const map = mapRef.current;
     const focused = focusedMarker;
     const AMapCtor = typeof window !== "undefined" ? window.AMap : undefined;
@@ -529,9 +969,87 @@ export function MapView({
         window.clearTimeout(recentreTimer);
       }
     };
-  }, [focusedMarker, status, showInfoWindow]);
+  }, [provider, focusedMarker, status, showInfoWindow]);
 
   useEffect(() => {
+    if (!isGoogleProvider) {
+      return;
+    }
+
+    const googleGlobal = typeof window !== "undefined" ? window.google : undefined;
+    const map = googleMapRef.current;
+
+    if (!googleReady || !map || !googleGlobal?.maps) {
+      return;
+    }
+
+    if (!focusedMarker) {
+      googleInfoWindowRef.current?.close?.();
+      return;
+    }
+
+    const position = new googleGlobal.maps.LatLng(focusedMarker.lat, focusedMarker.lng);
+    map.panTo(position);
+
+    const currentZoom = map.getZoom?.();
+    const targetZoom = typeof currentZoom === "number" ? Math.max(currentZoom, 13) : 13;
+    map.setZoom(targetZoom);
+
+    if (!showInfoWindow) {
+      googleInfoWindowRef.current?.close?.();
+      return;
+    }
+
+    if (!googleInfoWindowRef.current) {
+      googleInfoWindowRef.current = new googleGlobal.maps.InfoWindow();
+    }
+
+    const infoWindow = googleInfoWindowRef.current;
+
+    const epsilon = 1e-6;
+    const targetMarkerEntry = googleMarkersRef.current.find(({ marker }) => {
+      const markerPosition = marker.getPosition?.();
+
+      if (!markerPosition) {
+        return false;
+      }
+
+      const latDiff = Math.abs(markerPosition.lat() - focusedMarker.lat);
+      const lngDiff = Math.abs(markerPosition.lng() - focusedMarker.lng);
+      return latDiff < epsilon && lngDiff < epsilon;
+    });
+
+    const content = buildInfoContent({
+      lat: focusedMarker.lat,
+      lng: focusedMarker.lng,
+      label: focusedMarker.label ?? "行程活动",
+      address: focusedMarker.address,
+      sequenceGroup: focusedMarker.label
+        ? [
+            {
+              sequence: 1,
+              label: focusedMarker.label,
+              address: focusedMarker.address
+            }
+          ]
+        : undefined
+    } as Marker);
+
+    infoWindow.setContent(content);
+
+    if (targetMarkerEntry?.marker) {
+      infoWindow.open({ map, anchor: targetMarkerEntry.marker });
+    } else {
+      infoWindow.setPosition(position);
+      infoWindow.open({ map });
+    }
+  }, [isGoogleProvider, googleReady, focusedMarker, showInfoWindow]);
+
+  useEffect(() => {
+    if (provider !== "amap") {
+      return;
+    }
+
     const AMapCtor = typeof window !== "undefined" && sdkReady ? window.AMap : undefined;
 
     if (!AMapCtor) {
@@ -546,12 +1064,15 @@ export function MapView({
       infoWindowRef.current?.close?.();
       infoWindowRef.current = null;
     }
-  }, [showInfoWindow, sdkReady]);
+  }, [provider, showInfoWindow, sdkReady]);
 
   if (status === "error") {
+    const errorHeightClass = compact ? "h-48" : "h-80";
     return (
-      <div className="flex h-80 items-center justify-center rounded-2xl border border-slate-800 bg-slate-950/70 text-sm text-slate-400">
-        地图加载失败，请检查 API Key 配置。
+      <div
+        className={`flex ${errorHeightClass} items-center justify-center rounded-2xl border border-slate-800 bg-slate-950/70 text-sm text-slate-400`}
+      >
+        {providerLabel} 加载失败，请检查 API Key 配置。
       </div>
     );
   }
