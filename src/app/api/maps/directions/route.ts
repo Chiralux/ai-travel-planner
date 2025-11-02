@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { loadEnv } from "../../../../core/config/env";
+import { isCoordinateInChina } from "../../../../lib/maps/provider";
+import { fetchGoogleRoute } from "../../../../adapters/maps/googleDirections";
 
 const requestSchema = z.object({
   origin: z.object({
@@ -143,10 +145,6 @@ function parseNumeric(value?: string | number | null): number {
 export async function POST(request: NextRequest) {
   const env = loadEnv();
 
-  if (!env.AMAP_REST_KEY) {
-    return NextResponse.json({ ok: false, error: "AMAP_REST_KEY not configured" }, { status: 500 });
-  }
-
   let payload: z.infer<typeof requestSchema>;
 
   try {
@@ -156,8 +154,53 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: false, error: "Invalid request payload" }, { status: 400 });
   }
 
-  const origin = `${payload.origin.lng},${payload.origin.lat}`;
-  const destination = `${payload.destination.lng},${payload.destination.lat}`;
+  const originCoordinate = payload.origin;
+  const destinationCoordinate = payload.destination;
+
+  const shouldUseGoogle =
+    !isCoordinateInChina(originCoordinate) || !isCoordinateInChina(destinationCoordinate);
+
+  if (shouldUseGoogle) {
+    const googleKey = env.GOOGLE_MAPS_API_KEY ?? env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
+
+    if (!googleKey) {
+      return NextResponse.json(
+        { ok: false, error: "GOOGLE_MAPS_API_KEY not configured" },
+        { status: 500 }
+      );
+    }
+
+    const route = await fetchGoogleRoute({
+      origin: originCoordinate,
+      destination: destinationCoordinate,
+      mode: payload.mode,
+      apiKey: googleKey
+    });
+
+    if (!route) {
+      return NextResponse.json(
+        { ok: false, error: "Google Routes API returned no usable route" },
+        { status: 502 }
+      );
+    }
+
+    return NextResponse.json({
+      ok: true,
+      data: {
+        points: route.points,
+        distanceMeters: route.distanceMeters,
+        durationSeconds: route.durationSeconds,
+        mode: payload.mode
+      }
+    });
+  }
+
+  if (!env.AMAP_REST_KEY) {
+    return NextResponse.json({ ok: false, error: "AMAP_REST_KEY not configured" }, { status: 500 });
+  }
+
+  const origin = `${originCoordinate.lng},${originCoordinate.lat}`;
+  const destination = `${destinationCoordinate.lng},${destinationCoordinate.lat}`;
 
   switch (payload.mode) {
     case "cycling":
