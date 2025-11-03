@@ -201,6 +201,74 @@ export function MapView({
     return { ...preset };
   }, [compact]);
 
+  const updateGoogleViewport = useCallback(() => {
+    if (!isGoogleProvider) {
+      return;
+    }
+
+    const googleGlobal = typeof window !== "undefined" ? window.google : undefined;
+    const map = googleMapRef.current;
+
+    if (!googleReady || !map || !googleGlobal?.maps) {
+      return;
+    }
+
+    const hasRoute = Array.isArray(route?.points) && route.points.length >= 2;
+
+    if (hasRoute && googleRouteBoundsRef.current) {
+      if (!focusedMarker) {
+        map.fitBounds(googleRouteBoundsRef.current, googleBoundsPadding);
+      }
+      return;
+    }
+
+    if (focusedMarker) {
+      return;
+    }
+
+    if (validMarkers.length === 0) {
+      map.setCenter({ lat: DEFAULT_CENTER[1], lng: DEFAULT_CENTER[0] });
+      map.setZoom(DEFAULT_GOOGLE_ZOOM_EMPTY);
+      return;
+    }
+
+    if (validMarkers.length === 1) {
+      const single = validMarkers[0];
+      map.setCenter({ lat: single.lat, lng: single.lng });
+      const currentZoom = map.getZoom?.();
+      const targetZoom = typeof currentZoom === "number" ? Math.max(currentZoom, 13) : 13;
+      map.setZoom(targetZoom);
+      return;
+    }
+
+    const bounds = new googleGlobal.maps.LatLngBounds();
+    validMarkers.forEach((marker) => {
+      bounds.extend(new googleGlobal.maps.LatLng(marker.lat, marker.lng));
+    });
+
+    if (bounds.isEmpty?.()) {
+      map.setCenter({ lat: DEFAULT_CENTER[1], lng: DEFAULT_CENTER[0] });
+      map.setZoom(DEFAULT_GOOGLE_ZOOM_EMPTY);
+      return;
+    }
+
+    map.fitBounds(bounds, googleBoundsPadding);
+
+    const northEast = bounds.getNorthEast?.();
+    const southWest = bounds.getSouthWest?.();
+
+    if (northEast && southWest) {
+      const latDiff = Math.abs(northEast.lat() - southWest.lat());
+      const lngDiff = Math.abs(northEast.lng() - southWest.lng());
+
+      if (latDiff < 1e-4 && lngDiff < 1e-4) {
+        const currentZoom = map.getZoom?.();
+        const targetZoom = typeof currentZoom === "number" ? Math.max(currentZoom, 13) : 13;
+        map.setZoom(targetZoom);
+      }
+    }
+  }, [isGoogleProvider, googleReady, route, validMarkers, googleBoundsPadding, focusedMarker]);
+
   useEffect(() => {
     setStatus("loading");
   }, [provider]);
@@ -551,33 +619,54 @@ export function MapView({
 
     googleMarkersRef.current = nextMarkers;
 
-    const routePoints = Array.isArray(route?.points) ? route.points : [];
-    const hasActiveRoute = routePoints.length >= 2;
+    updateGoogleViewport();
+  }, [isGoogleProvider, googleReady, validMarkers, showInfoWindow, route, updateGoogleViewport]);
 
-    if (hasActiveRoute) {
-      if (googleRouteBoundsRef.current) {
-        map.fitBounds(googleRouteBoundsRef.current, googleBoundsPadding);
-      }
+  useEffect(() => {
+    if (!isGoogleProvider) {
       return;
     }
 
-    if (validMarkers.length === 1) {
-      const single = validMarkers[0];
-      map.setCenter({ lat: single.lat, lng: single.lng });
-      const currentZoom = map.getZoom?.();
-      const targetZoom = typeof currentZoom === "number" ? Math.max(currentZoom, 13) : 13;
-      map.setZoom(targetZoom);
-    } else {
-      const bounds = new googleGlobal.maps.LatLngBounds();
-      validMarkers.forEach((marker) => {
-        bounds.extend(new googleGlobal.maps.LatLng(marker.lat, marker.lng));
-      });
-
-      if (!bounds.isEmpty?.()) {
-        map.fitBounds(bounds, googleBoundsPadding);
-      }
+    if (typeof window === "undefined") {
+      return;
     }
-  }, [isGoogleProvider, googleReady, validMarkers, showInfoWindow, route, googleBoundsPadding]);
+
+    const googleGlobal = window.google;
+    const map = googleMapRef.current;
+
+    if (!googleReady || !map || !googleGlobal?.maps) {
+      return;
+    }
+
+    const triggerResizeAndRefit = () => {
+      googleGlobal.maps.event.trigger(map, "resize");
+      updateGoogleViewport();
+    };
+
+    triggerResizeAndRefit();
+
+    let observer: ResizeObserver | null = null;
+
+    if (typeof ResizeObserver !== "undefined" && containerRef.current) {
+      observer = new ResizeObserver(() => {
+        triggerResizeAndRefit();
+      });
+      observer.observe(containerRef.current);
+    }
+
+    const handleWindowResize = () => {
+      triggerResizeAndRefit();
+    };
+
+    window.addEventListener("resize", handleWindowResize);
+
+    return () => {
+      if (observer) {
+        observer.disconnect();
+      }
+      window.removeEventListener("resize", handleWindowResize);
+    };
+  }, [isGoogleProvider, googleReady, updateGoogleViewport]);
 
   useEffect(() => {
     if (!isGoogleProvider) {
