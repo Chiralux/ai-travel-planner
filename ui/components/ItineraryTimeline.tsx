@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type ChangeEvent, type KeyboardEvent, type MouseEvent } from "react";
+import { useEffect, useMemo, useState, type ChangeEvent, type KeyboardEvent, type MouseEvent } from "react";
 import type { Activity, Itinerary } from "../../src/core/validation/itinerarySchema";
 
 type FocusableMarker = {
@@ -49,12 +49,53 @@ export function ItineraryTimeline({
 }: ItineraryTimelineProps) {
   const [expandedActivities, setExpandedActivities] = useState<Set<string>>(() => new Set());
   const [editorState, setEditorState] = useState<ActivityEditorState | null>(null);
+  const [loadingActivityKeys, setLoadingActivityKeys] = useState<Set<string>>(() => new Set());
   const canEdit = typeof onActivityUpdate === "function";
   const canNavigate = typeof onActivityNavigate === "function";
+
+  const itineraryResetToken = useMemo(() => {
+    if (!itinerary) {
+      return null;
+    }
+
+    const daySummary = itinerary.daily_plan
+      .map((day) => `${day.day}:${day.activities.length}`)
+      .join("|");
+
+    return `${itinerary.destination}|${itinerary.days}|${itinerary.daily_plan.length}|${daySummary}`;
+  }, [itinerary]);
 
   useEffect(() => {
     setExpandedActivities(new Set());
     setEditorState(null);
+  }, [itineraryResetToken]);
+
+  useEffect(() => {
+    if (!itinerary) {
+      setLoadingActivityKeys(new Set());
+      return;
+    }
+
+    const next = new Set<string>(loadingActivityKeys);
+
+    for (let dayIndex = 0; dayIndex < itinerary.daily_plan.length; dayIndex += 1) {
+      const day = itinerary.daily_plan[dayIndex];
+
+      for (let activityIndex = 0; activityIndex < day.activities.length; activityIndex += 1) {
+        const activity = day.activities[activityIndex];
+        const key = `${day.day}-${activityIndex}`;
+
+        if (activity.media_requests) {
+          next.add(key);
+        } else {
+          // media_requests cleared => request finished (success or failure)
+          next.delete(key);
+        }
+      }
+    }
+
+    setLoadingActivityKeys(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [itinerary]);
 
   const toggleExpanded = (key: string) => {
@@ -103,6 +144,8 @@ export function ItineraryTimeline({
                   ? `${activity.address}${confidenceLabel ? `（${confidenceLabel}）` : ""}`
                   : null;
                 const photos: string[] = Array.isArray(activity.photos) ? activity.photos.slice(0, 2) : [];
+                const isMediaPending = Boolean(activity.media_requests);
+                const isMediaLoading = loadingActivityKeys.has(activityKey);
                 const hasCoords = typeof activity.lat === "number" && typeof activity.lng === "number";
                 const focusPayload = hasCoords
                   ? {
@@ -355,9 +398,15 @@ export function ItineraryTimeline({
                                 ))}
                               </div>
                             )}
+                            {photos.length === 0 && isMediaLoading && (
+                              <div className="flex items-center gap-2 rounded-md border border-dashed border-slate-700/70 bg-slate-900/60 px-3 py-4 text-xs text-slate-400">
+                                <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-slate-600 border-t-transparent" aria-hidden="true" />
+                                正在为该活动加载参考图片…
+                              </div>
+                            )}
                             {activity.note && <p>{activity.note}</p>}
                             {addressLine && <p>{addressLine}</p>}
-                            {!activity.note && !addressLine && photos.length === 0 && (
+                            {!activity.note && !addressLine && photos.length === 0 && !isMediaPending && (
                               <p className="text-slate-500">暂无更多信息</p>
                             )}
                           </>
