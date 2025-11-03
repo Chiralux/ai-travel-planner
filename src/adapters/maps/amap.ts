@@ -2,6 +2,7 @@ import { loadEnv } from "../../core/config/env";
 import type { GeocodeOptions, MapsClient, Place } from "../../core/ports/maps";
 import type { Activity } from "../../core/validation/itinerarySchema";
 import { requestJson } from "./shared";
+import { generateAddressCandidates } from "../../core/utils/addressCandidates";
 
 const AMAP_TEXT_ENDPOINT = "https://restapi.amap.com/v5/place/text";
 const AMAP_NEW_POI_ENDPOINT = "https://restapi.amap.com/v5/place/fast";
@@ -948,7 +949,8 @@ export class AMapClient implements MapsClient {
     address?: string,
     note?: string
   ): Array<{ term: string; role?: CandidateRole }> {
-    const terms = new Map<string, CandidateRole | undefined>();
+    const results: Array<{ term: string; role?: CandidateRole }> = [];
+    const seen = new Set<string>();
 
     const clean = (value?: string) => value?.trim();
     const cleanedDestination = clean(destination);
@@ -962,57 +964,75 @@ export class AMapClient implements MapsClient {
       { text: cleanedDestination }
     ]);
 
-    const addTerm = (value?: string, role?: CandidateRole) => {
+    const pushTerm = (value?: string, role?: CandidateRole) => {
       const trimmed = value?.trim();
 
       if (!trimmed) {
         return;
       }
 
-      const existingRole = terms.get(trimmed);
-
-      if (!existingRole || existingRole === "generic") {
-        terms.set(trimmed, role ?? existingRole);
+      if (seen.has(trimmed)) {
+        return;
       }
+
+      seen.add(trimmed);
+      results.push({ term: trimmed, role });
     };
 
+    const addressCandidates = cleanedAddress ? generateAddressCandidates(cleanedAddress) : [];
+
+    for (const candidate of addressCandidates) {
+      pushTerm(candidate);
+    }
+
+    if (cleanedDestination) {
+      for (const candidate of addressCandidates) {
+        pushTerm(`${cleanedDestination} ${candidate}`);
+      }
+    }
+
+    if (cleanedTitle) {
+      for (const candidate of addressCandidates) {
+        pushTerm(`${cleanedTitle} ${candidate}`);
+      }
+    }
+
     if (cleanedTitle && cleanedAddress) {
-      addTerm(`${cleanedTitle} ${cleanedAddress}`);
+      pushTerm(`${cleanedTitle} ${cleanedAddress}`);
     }
 
     if (cleanedDestination && cleanedAddress) {
-      addTerm(`${cleanedDestination} ${cleanedAddress}`);
+      pushTerm(`${cleanedDestination} ${cleanedAddress}`);
     }
 
     if (cleanedDestination && cleanedTitle) {
-      addTerm(`${cleanedDestination} ${cleanedTitle}`);
+      pushTerm(`${cleanedDestination} ${cleanedTitle}`);
     }
 
     if (cleanedTitle && cleanedNote) {
-      addTerm(`${cleanedTitle} ${cleanedNote}`);
+      pushTerm(`${cleanedTitle} ${cleanedNote}`);
     }
 
-    addTerm(cleanedAddress);
-    addTerm(cleanedTitle);
-    addTerm(cleanedNote);
+    pushTerm(cleanedTitle);
+    pushTerm(cleanedNote);
 
     for (const { keyword, role } of keyLocationKeywords) {
-      addTerm(keyword, role);
+      pushTerm(keyword, role);
 
       if (cleanedDestination) {
-        addTerm(`${cleanedDestination} ${keyword}`, role);
-        addTerm(`${keyword} ${cleanedDestination}`, role);
+        pushTerm(`${cleanedDestination} ${keyword}`, role);
+        pushTerm(`${keyword} ${cleanedDestination}`, role);
       }
 
       if (cleanedTitle) {
-        addTerm(`${cleanedTitle} ${keyword}`, role);
+        pushTerm(`${cleanedTitle} ${keyword}`, role);
       }
 
       if (cleanedAddress) {
-        addTerm(`${cleanedAddress} ${keyword}`, role);
+        pushTerm(`${cleanedAddress} ${keyword}`, role);
       }
     }
 
-    return Array.from(terms.entries()).map(([term, role]) => ({ term, role }));
+    return results;
   }
 }

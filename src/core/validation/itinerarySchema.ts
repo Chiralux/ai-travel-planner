@@ -15,7 +15,8 @@ const activityMediaRequestSchema = z
         query: z.string().min(1),
         destination: z.string().optional(),
         language: z.string().optional(),
-        maxResults: z.number().int().positive().optional()
+        maxResults: z.number().int().positive().optional(),
+        placeId: z.string().optional()
       })
       .optional()
   })
@@ -30,7 +31,25 @@ const activitySchema = z
     note: z.string().optional(),
     lat: z.number().optional(),
     lng: z.number().optional(),
+  place_id: z.string().optional(),
     address: z.string().optional(),
+    place_details: z
+      .object({
+        name: z.string().optional(),
+        formatted_address: z.string().optional(),
+        international_phone_number: z.string().optional(),
+        website: z.string().url().optional(),
+        google_maps_uri: z.string().url().optional(),
+        rating: z.number().min(0).max(5).optional(),
+        user_ratings_total: z.number().int().nonnegative().optional(),
+        types: z.array(z.string()).optional(),
+        opening_hours: z
+          .object({
+            weekday_text: z.array(z.string()).optional()
+          })
+          .optional()
+      })
+      .optional(),
     cost_estimate: z.number().nonnegative().optional(),
     maps_confidence: z.number().min(0).max(1).optional(),
     photos: z.array(z.string().url()).max(6).optional(),

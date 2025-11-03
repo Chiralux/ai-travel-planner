@@ -328,6 +328,7 @@ function normalizeLocationRefinementPayload(payload: unknown): LocationRefinemen
   const searchQueries = normalizeStringArray(data.search_queries ?? data.searchQueries);
   const nearbyLandmarks = normalizeStringArray(data.nearby_landmarks ?? data.nearbyLandmarks);
   const reason = normalizeString(data.reason);
+  const placeId = normalizeString(data.place_id ?? data.placeId);
 
   const result: LocationRefinementResult = {};
 
@@ -358,6 +359,10 @@ function normalizeLocationRefinementPayload(payload: unknown): LocationRefinemen
 
   if (reason) {
     result.reason = reason;
+  }
+
+  if (placeId) {
+    result.placeId = placeId;
   }
 
   return Object.keys(result).length === 0 ? null : result;

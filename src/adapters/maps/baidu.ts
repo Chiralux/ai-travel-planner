@@ -2,6 +2,7 @@ import { loadEnv } from "../../core/config/env";
 import type { GeocodeOptions, MapsClient, Place } from "../../core/ports/maps";
 import type { Activity } from "../../core/validation/itinerarySchema";
 import { requestJson } from "./shared";
+import { generateAddressCandidates } from "../../core/utils/addressCandidates";
 
 const BAIDU_SUGGESTION_ENDPOINT = "https://api.map.baidu.com/place/v2/suggestion";
 const LOCATION_SUFFIX_PATTERN = /(特别行政区|自治区|自治州|地区|盟|市|省|县|区)$/u;
@@ -418,7 +419,8 @@ export class BaiduMapClient implements MapsClient {
     address?: string,
     note?: string
   ): string[] {
-    const terms = new Set<string>();
+    const terms: string[] = [];
+    const seen = new Set<string>();
 
     const clean = (value?: string) => value?.trim();
     const cleanedDestination = clean(destination);
@@ -426,34 +428,55 @@ export class BaiduMapClient implements MapsClient {
     const cleanedAddress = clean(address);
     const cleanedNote = clean(note);
 
-    if (cleanedTitle && cleanedAddress) {
-      terms.add(`${cleanedTitle} ${cleanedAddress}`);
+    const pushTerm = (value?: string) => {
+      const trimmed = value?.trim();
+      if (!trimmed) {
+        return;
+      }
+      if (seen.has(trimmed)) {
+        return;
+      }
+      seen.add(trimmed);
+      terms.push(trimmed);
+    };
+
+    const addressCandidates = cleanedAddress ? generateAddressCandidates(cleanedAddress) : [];
+
+    for (const candidate of addressCandidates) {
+      pushTerm(candidate);
     }
 
-    if (cleanedDestination && cleanedAddress) {
-      terms.add(`${cleanedDestination} ${cleanedAddress}`);
-    }
-
-    if (cleanedDestination && cleanedTitle) {
-      terms.add(`${cleanedDestination} ${cleanedTitle}`);
-    }
-
-    if (cleanedTitle && cleanedNote) {
-      terms.add(`${cleanedTitle} ${cleanedNote}`);
-    }
-
-    if (cleanedAddress) {
-      terms.add(cleanedAddress);
+    if (cleanedDestination) {
+      for (const candidate of addressCandidates) {
+        pushTerm(`${cleanedDestination} ${candidate}`);
+      }
     }
 
     if (cleanedTitle) {
-      terms.add(cleanedTitle);
+      for (const candidate of addressCandidates) {
+        pushTerm(`${cleanedTitle} ${candidate}`);
+      }
     }
 
-    if (cleanedNote) {
-      terms.add(cleanedNote);
+    if (cleanedTitle && cleanedAddress) {
+      pushTerm(`${cleanedTitle} ${cleanedAddress}`);
     }
 
-    return Array.from(terms);
+    if (cleanedDestination && cleanedAddress) {
+      pushTerm(`${cleanedDestination} ${cleanedAddress}`);
+    }
+
+    if (cleanedDestination && cleanedTitle) {
+      pushTerm(`${cleanedDestination} ${cleanedTitle}`);
+    }
+
+    if (cleanedTitle && cleanedNote) {
+      pushTerm(`${cleanedTitle} ${cleanedNote}`);
+    }
+
+    pushTerm(cleanedTitle);
+    pushTerm(cleanedNote);
+
+    return terms;
   }
 }

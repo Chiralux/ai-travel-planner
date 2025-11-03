@@ -55,6 +55,7 @@ export type LocationRefinementResult = {
   lng?: number;
   confidence?: number;
   reason?: string;
+  placeId?: string;
 };
 
 export function createLLMClient(provider?: string): LLMClient {

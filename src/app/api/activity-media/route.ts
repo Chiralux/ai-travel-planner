@@ -3,7 +3,7 @@ import { z } from "zod";
 import { loadEnv } from "../../../core/config/env";
 import { fetchStreetViewImage } from "../../../adapters/maps/googleStreetView";
 import { geocodeAddressWithGoogle } from "../../../adapters/maps/googleGeocode";
-import { searchPlacePhotosByName } from "../../../adapters/maps/googlePlacesPhotos";
+import { searchPlacePhotosByName, searchPlacePhotosByPlaceId } from "../../../adapters/maps/googlePlacesPhotos";
 import { isCoordinateInChina } from "../../../lib/maps/provider";
 import { GEOCODED_CONFIDENCE, MAX_NAME_BASED_PHOTOS } from "../../../services/ItineraryService";
 
@@ -37,6 +37,7 @@ const requestSchema = z.object({
     lat: z.number().optional(),
     lng: z.number().optional(),
     maps_confidence: z.number().min(0).max(1).optional(),
+    place_id: z.string().optional(),
     photos: z.array(z.string().url()).optional(),
     media_requests: activityMediaRequestSchema
   })
@@ -137,10 +138,12 @@ export async function POST(request: NextRequest) {
         source: "outdoor"
       });
 
-      if (streetViewResult.url) {
-        if (!existingPhotos.has(streetViewResult.url)) {
-          newPhotos.push(streetViewResult.url);
-          existingPhotos.add(streetViewResult.url);
+      const streetViewPhoto = streetViewResult.imageDataUrl ?? streetViewResult.url;
+
+      if (streetViewPhoto) {
+        if (!existingPhotos.has(streetViewPhoto)) {
+          newPhotos.push(streetViewPhoto);
+          existingPhotos.add(streetViewPhoto);
         }
         note = appendNote(note, "附加了 Google 街景图像，请确认实际情况。");
         if (resolvedFromGeocode) {
@@ -161,13 +164,39 @@ export async function POST(request: NextRequest) {
 
   if (placePhotoRequest) {
     try {
-      const response = await searchPlacePhotosByName({
-        query: placePhotoRequest.query,
-        destinationHint: placePhotoRequest.destination ?? destination,
-        apiKey: googleApiKey,
-        language: placePhotoRequest.language ?? "en",
-        maxResults: Math.min(placePhotoRequest.maxResults ?? MAX_NAME_BASED_PHOTOS, MAX_NAME_BASED_PHOTOS)
-      });
+      const preferredLanguage = placePhotoRequest.language ?? "en";
+      const preferredMaxResults = Math.min(
+        placePhotoRequest.maxResults ?? MAX_NAME_BASED_PHOTOS,
+        MAX_NAME_BASED_PHOTOS
+      );
+
+      const requestPlaceId =
+        typeof (placePhotoRequest as { placeId?: unknown }).placeId === "string"
+          ? ((placePhotoRequest as { placeId?: string }).placeId ?? "")
+          : "";
+
+      const candidatePlaceId = (requestPlaceId || activity.place_id || "").trim();
+
+      let response = null;
+
+      if (candidatePlaceId) {
+        response = await searchPlacePhotosByPlaceId({
+          placeId: candidatePlaceId,
+          apiKey: googleApiKey,
+          language: preferredLanguage,
+          maxResults: preferredMaxResults
+        });
+      }
+
+      if (!response) {
+        response = await searchPlacePhotosByName({
+          query: placePhotoRequest.query,
+          destinationHint: placePhotoRequest.destination ?? destination,
+          apiKey: googleApiKey,
+          language: preferredLanguage,
+          maxResults: preferredMaxResults
+        });
+      }
 
       if (response?.photos?.length) {
         for (const photo of response.photos) {

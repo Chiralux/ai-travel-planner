@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import type { Dispatcher } from "undici";
 import { getGoogleMapsDispatcher } from "./googleDispatcher";
 
@@ -24,6 +25,8 @@ export type StreetViewMetadata = {
 export type StreetViewFetchResult = {
   status: string;
   url: string | null;
+  imageDataUrl?: string | null;
+  mimeType?: string;
   metadata?: StreetViewMetadata;
 };
 
@@ -120,9 +123,33 @@ export async function fetchStreetViewImage(options: StreetViewOptions): Promise<
         };
       }
 
+      const imageUrl = buildImageUrl(options, metadata);
+      const imageFetchInit: RequestInit & { dispatcher?: Dispatcher } = { cache: "no-store" };
+
+      if (attempt.useProxy && dispatcher) {
+        imageFetchInit.dispatcher = dispatcher;
+      }
+
+      const imageResponse = await fetch(imageUrl, imageFetchInit);
+
+      if (!imageResponse.ok) {
+        return {
+          status: `HTTP_IMG_${imageResponse.status}`,
+          url: null,
+          metadata
+        };
+      }
+
+      const buffer = await imageResponse.arrayBuffer();
+      const mimeType = imageResponse.headers.get("content-type") ?? "image/jpeg";
+      const base64 = Buffer.from(buffer).toString("base64");
+      const dataUrl = `data:${mimeType};base64,${base64}`;
+
       return {
         status: metadata.status,
-        url: buildImageUrl(options, metadata),
+        url: imageUrl,
+        imageDataUrl: dataUrl,
+        mimeType,
         metadata
       };
     } catch (error) {
@@ -170,6 +197,7 @@ export async function fetchStreetViewImage(options: StreetViewOptions): Promise<
   return {
     status:
       finalError instanceof Error ? `ERROR_${finalError.name || "UNKNOWN"}` : "ERROR_UNKNOWN",
-    url: null
+    url: null,
+    imageDataUrl: null
   };
 }

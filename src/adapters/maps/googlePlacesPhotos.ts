@@ -13,10 +13,29 @@ type FindPlaceResponse = {
   error_message?: string;
 };
 
+type PlaceDetailsPhoto = { photo_reference?: string };
+
+type PlaceDetailsResponse = {
+  status?: string;
+  result?: {
+    photos?: PlaceDetailsPhoto[];
+    name?: string;
+  };
+  error_message?: string;
+};
+
 type SearchPlacePhotoOptions = {
   query: string;
   apiKey: string;
   destinationHint?: string;
+  language?: string;
+  maxResults?: number;
+  maxWidth?: number;
+};
+
+type SearchPlacePhotoByIdOptions = {
+  placeId: string;
+  apiKey: string;
   language?: string;
   maxResults?: number;
   maxWidth?: number;
@@ -29,6 +48,7 @@ type PlacePhotoSearchResult = {
 
 const FIND_PLACE_ENDPOINT = "https://maps.googleapis.com/maps/api/place/findplacefromtext/json";
 const PLACE_PHOTO_ENDPOINT = "https://maps.googleapis.com/maps/api/place/photo";
+const PLACE_DETAILS_ENDPOINT = "https://maps.googleapis.com/maps/api/place/details/json";
 const DEFAULT_MAX_RESULTS = 4;
 const DEFAULT_MAX_WIDTH = 800;
 const MIN_MATCH_SCORE = 0.6;
@@ -196,5 +216,79 @@ export async function searchPlacePhotosByName(
   return {
     photos,
     matchedName: bestCandidate.name ?? query
+  };
+}
+
+export async function searchPlacePhotosByPlaceId(
+  options: SearchPlacePhotoByIdOptions
+): Promise<PlacePhotoSearchResult | null> {
+  const { placeId, apiKey, language, maxResults, maxWidth } = options;
+
+  const trimmed = placeId.trim();
+
+  if (!trimmed) {
+    return null;
+  }
+
+  const dispatcher = getGoogleMapsDispatcher();
+  const fetchInit: RequestInit & { dispatcher?: Dispatcher } = { cache: "no-store" };
+
+  if (dispatcher) {
+    fetchInit.dispatcher = dispatcher;
+  }
+
+  const url = new URL(PLACE_DETAILS_ENDPOINT);
+  url.searchParams.set("place_id", trimmed);
+  url.searchParams.set("fields", "name,photos");
+  url.searchParams.set("key", apiKey);
+  url.searchParams.set("language", language ?? "en");
+  url.searchParams.set("photoMetadatas", "true");
+
+  let json: PlaceDetailsResponse | null = null;
+
+  try {
+    const response = await fetch(url.toString(), fetchInit);
+
+    if (!response.ok) {
+      if (process.env.NODE_ENV !== "production") {
+        console.warn("[GooglePlaces] PlaceId photo request failed", {
+          status: response.status,
+          statusText: response.statusText,
+          placeId: trimmed
+        });
+      }
+
+      return null;
+    }
+
+    json = (await response.json()) as PlaceDetailsResponse;
+  } catch (error) {
+    if (process.env.NODE_ENV !== "production") {
+      console.warn("[GooglePlaces] PlaceId photo request threw", {
+        placeId: trimmed,
+        error
+      });
+    }
+
+    return null;
+  }
+
+  if (!json || json.status !== "OK" || !json.result?.photos?.length) {
+    return null;
+  }
+
+  const photos = json.result.photos
+    .map((entry) => entry.photo_reference)
+    .filter((ref): ref is string => Boolean(ref))
+    .slice(0, maxResults ?? DEFAULT_MAX_RESULTS)
+    .map((ref) => buildPhotoUrl(ref, apiKey, maxWidth ?? DEFAULT_MAX_WIDTH));
+
+  if (photos.length === 0) {
+    return null;
+  }
+
+  return {
+    photos,
+    matchedName: json.result.name ?? ""
   };
 }

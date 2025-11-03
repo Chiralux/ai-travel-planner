@@ -200,6 +200,10 @@ export const usePlannerStore = create<PlannerState>((set) => ({
         ...updates
       };
 
+      if (Object.prototype.hasOwnProperty.call(updates, "media_requests") && updates.media_requests === undefined) {
+        delete (nextActivity as Record<string, unknown>).media_requests;
+      }
+
       const nextDailyPlan = state.result.daily_plan.map((currentDay, currentDayIndex) => {
         if (currentDayIndex !== dayIndex) {
           return currentDay;
@@ -248,6 +252,7 @@ export const mapMarkersSelector = (state: PlannerState) => {
     lng: number;
     label: string;
     address?: string;
+    placeId?: string;
     sequenceLabel?: string;
     sequenceGroup?: Array<{
       sequence: number;
@@ -296,6 +301,7 @@ export const mapMarkersSelector = (state: PlannerState) => {
     sequence: number;
     title: string;
     address?: string;
+    placeId?: string;
   };
 
   const grouped = new Map<
@@ -329,7 +335,8 @@ export const mapMarkersSelector = (state: PlannerState) => {
       grouped.get(duplicateKey)!.entries.push({
         sequence: currentSequence,
         title: activity.title,
-        address: formatAddressWithConfidence(activity.address, activity.maps_confidence)
+        address: formatAddressWithConfidence(activity.address, activity.maps_confidence),
+        placeId: activity.place_id
       });
     }
   }
@@ -340,12 +347,14 @@ export const mapMarkersSelector = (state: PlannerState) => {
     const label = titles.length === 0 ? "行程活动" : titles.join(" / ");
     const firstAddress = sortedEntries.find((entry) => Boolean(entry.address))?.address;
     const sequenceLabel = sortedEntries.map((entry) => entry.sequence).join("·");
+    const firstPlaceId = sortedEntries.find((entry) => entry.placeId)?.placeId;
 
     markers.push({
       lat: group.lat,
       lng: group.lng,
       label,
       address: firstAddress,
+      placeId: firstPlaceId,
       sequenceLabel: sequenceLabel || undefined,
       sequenceGroup: sortedEntries.map((entry) => ({
         sequence: entry.sequence,

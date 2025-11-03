@@ -14,7 +14,7 @@ import {
   type PlannerRoute
 } from "../../../lib/store/usePlannerStore";
 import { mergeParsedInput, parseTravelInput as localParseTravelInput } from "../../core/utils/travelInputParser";
-import { pickMapProvider, type MapProvider } from "../../lib/maps/provider";
+import { pickMapProvider, type MapProvider, isValidCoordinate } from "../../lib/maps/provider";
 import { useSupabaseAuth } from "../../lib/supabase/AuthProvider";
 import type { Activity } from "../../core/validation/itinerarySchema";
 
@@ -276,6 +276,8 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
   const latestNavigationAttemptRef = useRef(0);
   const mediaPrefetchRegistryRef = useRef<Set<string>>(new Set());
   const mediaSignatureRef = useRef<string | null>(null);
+  const activityLocateRegistryRef = useRef<Set<string>>(new Set());
+  const activityLocateSignatureRef = useRef<string | null>(null);
   const navigationModeLabel = NAVIGATION_MODE_LABELS[navigationMode];
   const navigationOriginLabel = NAVIGATION_ORIGIN_LABELS[navigationOriginOption];
   const mapProvider = useMemo(() => {
@@ -752,6 +754,211 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
 
     void detectCurrentOrigin();
   }, [detectCurrentOrigin, form.origin]);
+
+  useEffect(() => {
+    if (!result || mapProvider !== "google") {
+      activityLocateRegistryRef.current.clear();
+      activityLocateSignatureRef.current = null;
+      return;
+    }
+
+    const signature = [
+      result.destination ?? "",
+      String(result.days ?? ""),
+      result.daily_plan
+        .map((day) => day.activities.map((activity) => activity.title ?? "").join("|"))
+        .join("||")
+    ].join("#");
+
+    if (activityLocateSignatureRef.current !== signature) {
+      activityLocateRegistryRef.current.clear();
+      activityLocateSignatureRef.current = signature;
+    }
+
+    let cancelled = false;
+
+    const run = async () => {
+      for (let dayIndex = 0; dayIndex < result.daily_plan.length; dayIndex += 1) {
+        const day = result.daily_plan[dayIndex];
+
+        for (let activityIndex = 0; activityIndex < day.activities.length; activityIndex += 1) {
+          if (cancelled) {
+            return;
+          }
+
+          const activity = day.activities[activityIndex];
+
+          if (process.env.NODE_ENV !== "production") {
+            console.log("[Planner] Activity", {
+              dayIndex,
+              activityIndex,
+              payload: activity
+            });
+          }
+          const address = activity.address?.trim();
+
+          if (!address) {
+            continue;
+          }
+
+          const coordinateCandidate =
+            typeof activity.lat === "number" && Number.isFinite(activity.lat) &&
+            typeof activity.lng === "number" && Number.isFinite(activity.lng)
+              ? { lat: activity.lat, lng: activity.lng }
+              : null;
+
+          const hasCoordinate = isValidCoordinate(coordinateCandidate);
+          const hasPlaceId = typeof activity.place_id === "string" && activity.place_id.trim().length > 0;
+
+          if (hasPlaceId && hasCoordinate) {
+            continue;
+          }
+
+          const registryKey = `${signature}|${dayIndex}|${activityIndex}`;
+
+          if (activityLocateRegistryRef.current.has(registryKey)) {
+            continue;
+          }
+
+          activityLocateRegistryRef.current.add(registryKey);
+
+          const payload: {
+            destination: string;
+            activity: {
+              title: string;
+              note?: string;
+              address?: string;
+              lat?: number;
+              lng?: number;
+              maps_confidence?: number;
+            };
+            anchor?: { lat: number; lng: number };
+          } = {
+            destination: result.destination,
+            activity: {
+              title: activity.title,
+              note: activity.note,
+              address: activity.address,
+              lat: hasCoordinate ? coordinateCandidate?.lat : undefined,
+              lng: hasCoordinate ? coordinateCandidate?.lng : undefined,
+              maps_confidence: activity.maps_confidence
+            }
+          };
+
+          if (hasCoordinate && coordinateCandidate) {
+            payload.anchor = coordinateCandidate;
+          }
+
+          const headers: Record<string, string> = { "Content-Type": "application/json" };
+
+          if (accessToken) {
+            headers.Authorization = `Bearer ${accessToken}`;
+          }
+
+          try {
+            const response = await fetch("/api/activity-locate", {
+              method: "POST",
+              headers,
+              body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) {
+              activityLocateRegistryRef.current.delete(registryKey);
+
+              if (process.env.NODE_ENV !== "production") {
+                console.warn("[Planner] Activity locate request failed", {
+                  status: response.status,
+                  dayIndex,
+                  activityIndex
+                });
+              }
+
+              continue;
+            }
+
+            const json = await response.json();
+
+            if (!json?.ok || !json.data || cancelled) {
+              activityLocateRegistryRef.current.delete(registryKey);
+              continue;
+            }
+
+            const data = json.data as {
+              lat?: number;
+              lng?: number;
+              address?: string;
+              note?: string;
+              maps_confidence?: number;
+              place_id?: string;
+            };
+
+            const updates: Partial<Activity> = {};
+            const currentLat = typeof activity.lat === "number" && Number.isFinite(activity.lat) ? activity.lat : null;
+            const currentLng = typeof activity.lng === "number" && Number.isFinite(activity.lng) ? activity.lng : null;
+
+            if (
+              typeof data.lat === "number" &&
+              Number.isFinite(data.lat) &&
+              typeof data.lng === "number" &&
+              Number.isFinite(data.lng)
+            ) {
+              if (
+                !hasCoordinate ||
+                currentLat == null ||
+                currentLng == null ||
+                Math.abs(data.lat - currentLat) > 1e-6 ||
+                Math.abs(data.lng - currentLng) > 1e-6
+              ) {
+                updates.lat = data.lat;
+                updates.lng = data.lng;
+              }
+            }
+
+            if (typeof data.place_id === "string" && data.place_id.trim().length > 0 && data.place_id !== activity.place_id) {
+              updates.place_id = data.place_id;
+            }
+
+            if (typeof data.address === "string" && data.address.trim().length > 0 && data.address !== activity.address) {
+              updates.address = data.address;
+            }
+
+            if (typeof data.maps_confidence === "number" && Number.isFinite(data.maps_confidence)) {
+              if (
+                activity.maps_confidence == null ||
+                Math.abs(data.maps_confidence - activity.maps_confidence) > 1e-6
+              ) {
+                updates.maps_confidence = data.maps_confidence;
+              }
+            }
+
+            if (typeof data.note === "string" && data.note && data.note !== activity.note) {
+              updates.note = data.note;
+            }
+
+            if (Object.keys(updates).length > 0) {
+              updateActivity(dayIndex, activityIndex, updates);
+            }
+          } catch (error) {
+            activityLocateRegistryRef.current.delete(registryKey);
+
+            if (process.env.NODE_ENV !== "production") {
+              console.warn("[Planner] Failed to locate activity", {
+                dayIndex,
+                activityIndex,
+                error
+              });
+            }
+          }
+        }
+      }
+    };
+
+    void run();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [result, mapProvider, accessToken, updateActivity]);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -1680,89 +1887,97 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
 
     let cancelled = false;
 
-    const run = async () => {
-      for (let dayIndex = 0; dayIndex < result.daily_plan.length; dayIndex += 1) {
-        const day = result.daily_plan[dayIndex];
+    const queue: Array<{ key: string; dayIndex: number; activityIndex: number; activity: Activity }> = [];
 
-        for (let activityIndex = 0; activityIndex < day.activities.length; activityIndex += 1) {
-          if (cancelled) {
-            return;
-          }
+    for (let dayIndex = 0; dayIndex < result.daily_plan.length; dayIndex += 1) {
+      const day = result.daily_plan[dayIndex];
 
-          const activity = day.activities[activityIndex];
+      for (let activityIndex = 0; activityIndex < day.activities.length; activityIndex += 1) {
+        const activity = day.activities[activityIndex];
 
-          if (!activity.media_requests) {
-            continue;
-          }
-
-          const activityKey = `${signature}|${dayIndex}|${activityIndex}|${activity.title}`;
-
-          if (mediaPrefetchRegistryRef.current.has(activityKey)) {
-            continue;
-          }
-
-          mediaPrefetchRegistryRef.current.add(activityKey);
-
-          try {
-            const response = await fetch("/api/activity-media", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ destination: result.destination, activity })
-            });
-
-            if (!response.ok) {
-              continue;
-            }
-
-            const payload = (await response.json()) as {
-              ok?: boolean;
-              data?: { photos?: string[]; note?: string; maps_confidence?: number };
-            };
-
-            if (!payload?.ok || !payload.data || cancelled) {
-              continue;
-            }
-
-            const updates: Partial<Activity> = { media_requests: undefined };
-
-            if (Array.isArray(payload.data.photos) && payload.data.photos.length > 0) {
-              const merged = Array.from(
-                new Set([...(activity.photos ?? []), ...payload.data.photos])
-              ).slice(0, 6);
-              updates.photos = merged;
-            }
-
-            if (typeof payload.data.note === "string" && payload.data.note !== activity.note) {
-              updates.note = payload.data.note;
-            }
-
-            if (
-              typeof payload.data.maps_confidence === "number" &&
-              (activity.maps_confidence == null ||
-                Math.abs(payload.data.maps_confidence - activity.maps_confidence) > 1e-6)
-            ) {
-              updates.maps_confidence = payload.data.maps_confidence;
-            }
-
-            updateActivity(dayIndex, activityIndex, updates);
-          } catch (error) {
-            if (
-              typeof window !== "undefined" &&
-              process.env.NODE_ENV !== "production"
-            ) {
-              console.warn("[Planner] Failed to load activity media", {
-                destination: result.destination,
-                dayIndex,
-                activityIndex,
-                error
-              });
-            }
-          }
+        if (!activity.media_requests) {
+          continue;
         }
+
+        const activityKey = `${signature}|${dayIndex}|${activityIndex}|${activity.title}`;
+        if (mediaPrefetchRegistryRef.current.has(activityKey)) {
+          continue;
+        }
+
+        queue.push({ key: activityKey, dayIndex, activityIndex, activity });
+      }
+    }
+
+    const runSequentially = async () => {
+      for (const task of queue) {
+        if (cancelled) {
+          return;
+        }
+
+        try {
+          const response = await fetch("/api/activity-media", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ destination: result.destination, activity: task.activity })
+          });
+
+          if (!response.ok) {
+            await new Promise((resolve) => setTimeout(resolve, 400));
+            continue;
+          }
+
+          const payload = (await response.json()) as {
+            ok?: boolean;
+            data?: { photos?: string[]; note?: string; maps_confidence?: number };
+          };
+
+          if (!payload?.ok || !payload.data || cancelled) {
+            continue;
+          }
+
+          const updates: Partial<Activity> = { media_requests: undefined };
+
+          if (Array.isArray(payload.data.photos) && payload.data.photos.length > 0) {
+            const merged = Array.from(
+              new Set([...(task.activity.photos ?? []), ...payload.data.photos])
+            ).slice(0, 6);
+            updates.photos = merged;
+          }
+
+          if (typeof payload.data.note === "string" && payload.data.note !== task.activity.note) {
+            updates.note = payload.data.note;
+          }
+
+          if (
+            typeof payload.data.maps_confidence === "number" &&
+            (task.activity.maps_confidence == null ||
+              Math.abs(payload.data.maps_confidence - task.activity.maps_confidence) > 1e-6)
+          ) {
+            updates.maps_confidence = payload.data.maps_confidence;
+          }
+
+          updateActivity(task.dayIndex, task.activityIndex, updates);
+          mediaPrefetchRegistryRef.current.add(task.key);
+        } catch (error) {
+          if (
+            typeof window !== "undefined" &&
+            process.env.NODE_ENV !== "production"
+          ) {
+            console.warn("[Planner] Failed to load activity media", {
+              destination: result.destination,
+              dayIndex: task.dayIndex,
+              activityIndex: task.activityIndex,
+              error
+            });
+          }
+          mediaPrefetchRegistryRef.current.delete(task.key);
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 300));
       }
     };
 
-    run();
+    void runSequentially();
 
     return () => {
       cancelled = true;

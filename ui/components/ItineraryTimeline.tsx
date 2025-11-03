@@ -76,7 +76,7 @@ export function ItineraryTimeline({
       return;
     }
 
-    const next = new Set<string>(loadingActivityKeys);
+    const next = new Set<string>();
 
     for (let dayIndex = 0; dayIndex < itinerary.daily_plan.length; dayIndex += 1) {
       const day = itinerary.daily_plan[dayIndex];
@@ -85,17 +85,13 @@ export function ItineraryTimeline({
         const activity = day.activities[activityIndex];
         const key = `${day.day}-${activityIndex}`;
 
-        if (activity.media_requests) {
+        if (activity.media_requests && (!Array.isArray(activity.photos) || activity.photos.length === 0)) {
           next.add(key);
-        } else {
-          // media_requests cleared => request finished (success or failure)
-          next.delete(key);
         }
       }
     }
 
     setLoadingActivityKeys(next);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [itinerary]);
 
   const toggleExpanded = (key: string) => {

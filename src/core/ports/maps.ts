@@ -11,6 +11,7 @@ export type Place = {
   city?: string;
   lat?: number;
   lng?: number;
+  placeId?: string;
   provider: MapsProvider;
   raw?: unknown;
   confidence?: number;

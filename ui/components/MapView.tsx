@@ -8,6 +8,7 @@ type Marker = {
   lng: number;
   label: string;
   address?: string;
+  placeId?: string;
   sequenceLabel?: string;
   sequenceGroup?: Array<{
     sequence: number;
@@ -440,7 +441,7 @@ export function MapView({
     if (!script) {
       script = document.createElement("script");
       script.id = scriptId;
-      script.src = `https://maps.googleapis.com/maps/api/js?key=${googleApiKey}&language=zh-CN`;
+  script.src = `https://maps.googleapis.com/maps/api/js?key=${googleApiKey}&language=zh-CN&libraries=places`;
       script.async = true;
       script.defer = true;
       script.addEventListener("load", handleLoad);
@@ -511,12 +512,22 @@ export function MapView({
     const nextMarkers: Array<{ marker: any; listeners: any[] }> = [];
 
     for (const marker of validMarkers) {
-      const googleMarker = new googleGlobal.maps.Marker({
-        position: { lat: marker.lat, lng: marker.lng },
+      const markerOptions: Record<string, unknown> = {
         map,
         title: marker.label,
         label: marker.sequenceLabel
-      });
+      };
+
+      if (marker.placeId) {
+        markerOptions.place = {
+          placeId: marker.placeId,
+          location: { lat: marker.lat, lng: marker.lng }
+        };
+      } else {
+        markerOptions.position = { lat: marker.lat, lng: marker.lng };
+      }
+
+      const googleMarker = new googleGlobal.maps.Marker(markerOptions);
 
       const listeners: any[] = [];
 
