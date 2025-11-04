@@ -1,132 +1,170 @@
-docker pull ghcr.io/username/repo:latest
 # AI Travel Planner
 
-面向个人出行与小团队旅行的智能行程规划应用。结合语音识别、LLM 行程生成、高德地图地理信息和云端同步能力，为用户提供「输入—规划—保存—再编辑」的一体化体验。
+面向个人与小团队的智能行程规划应用。系统结合语音识别、LLM 行程生成、国内外地图服务与云端同步能力，为用户提供从需求采集到行程落地的完整体验。
 
-## 项目简介与功能点
+## 在线体验与演示
 
-- 通过语音或文本输入旅行需求，解析出结构化行程偏好。
-- 调用 Qwen / OpenAI 等 LLM 生成行程草案，并结合高德地图补全地理坐标与置信度说明。
-- 支持行程的云端保存、编辑、删除与快速切换，数据托管在 Supabase Postgres。
-- 采用 Next.js App Router + tRPC 作为 BFF（Backend For Frontend），统一管理 API、鉴权与缓存。
-- 使用 Redis 进行热点行程与地理反查的缓存，加速多用户请求。
-- 提供 Docker 镜像与 GitHub Actions 流水线，方便本地开发、预发与生产部署。
+> ℹ️ 若已上线生产环境，可将以下示例替换为真实信息。
 
-## 技术栈与架构
+- 生产站点（示例）：<https://travel.example.com>
+- 体验账号：`demo@example.com` / `Demo@1234`
+- 预览视频：<https://youtu.be/demo-travel-planner>
+- 截图资源：`docs/screenshots/`
 
-- **前端 / BFF**：Next.js 14 App Router（Server Components + Route Handlers）充当 BFF，聚合外部服务并暴露 tRPC 与 REST API。
-- **身份与数据存储**：Supabase（Auth + Postgres + Edge Functions）用于用户认证、行程计划表与历史记录存储。
-- **大模型**：可切换 Qwen（阿里云百炼 DashScope）与 OpenAI，依据 `AI_PROVIDER` 动态调用。
-- **地图与地理编码**：Amap（高德地图）REST 与 JS SDK，提供地点建议、静态地图渲染与坐标置信度。
-- **语音识别**：科大讯飞 iFLYTEK ASR，将语音输入转换为文本。
-- **缓存层**：Redis（通过 ioredis）缓存地理反查、LLM 中间结果与计划快照。
-- **API 编排**：tRPC 提供前后端类型安全调用；Next.js API Route 处理 Webhook / REST 访问信道。
-- **算法与服务**：服务层（`src/services/*`）封装计划、行程、费用等业务逻辑；适配器层连接外部 API（LLM、地图、ASR）。
-- **基础设施**：多阶段 Dockerfile 构建，GitHub Actions (`.github/workflows/docker-build-and-push.yml`) 负责多架构镜像推送。
+## 核心功能
 
-**文字架构图**：
-终端用户浏览器 → Next.js BFF（App Router / tRPC / API Routes）→ { Supabase Auth & Postgres | Redis | Amap REST | Qwen/OpenAI LLM | iFLYTEK ASR } → 返回规划结果 → 前端展示并可保存至云端 → Docker 部署提供统一运行时。
+- **多模态旅行输入**：支持语音（iFLYTEK ASR）与文本两种形式采集需求，自动提取目的地、预算、偏好等关键信息。
+- **AI 行程生成与润色**：基于 Qwen 或 OpenAI 生成多日行程草案，补全活动描述、时间安排与预算拆分。
+- **智能地理定位**：联合高德、Google、百度多方定位，自动填充地理坐标并在置信度不足时提示“位置信息由AI辅助推断，请注意核实。”。
+- **地图与导航体验**：主地图与浮动小地图联动展示活动与路线，支持街景、静态图快照与路线聚焦切换。
+- **媒体与参考信息**：按优先级顺序懒加载活动照片、附近地标与参考地址，平衡体验与 API 配额。
+- **云端行程管理**：借助 Supabase Postgres 与 Auth 保存、复制、删除行程，支持多端同步。
+- **预算与费用概览**：自动归类住宿、交通、餐饮、活动等预算，提供日均花费参考。
+- **离线草稿缓存**：未登录用户可临时保存行程草稿并稍后继续填写。
+- **日志与可观测性**：整合 Redis 缓存与 Logtail 日志，追踪关键请求。
 
-## 本地运行
+## 架构与技术栈
 
-1. 安装依赖（默认使用 `pnpm`）：
+- **前端 / BFF**：Next.js 14 App Router（Server Components + Route Handlers）+ tRPC，统一处理鉴权、缓存与类型安全 API。
+- **状态管理**：Zustand 协调地图焦点、媒体加载队列与 Planner UI 状态。
+- **LLM 层**：按 `AI_PROVIDER` 在 Qwen（DashScope）与 OpenAI 间切换，提供目的地国际化判定与提示词管理。
+- **地图服务**：高德 REST/JS、Google Maps Places & Directions、百度地图 REST。
+- **语音服务**：科大讯飞实时语音识别。
+- **数据与缓存**：Supabase（Auth + Postgres + Edge Functions）、Redis（热点行程与地理反查缓存）。
+- **可观测性**：Logtail 收集服务日志，辅助脚本位于 `tmp/`。
+- **基础设施**：多阶段 Dockerfile、GitHub Actions 构建并推送多架构镜像。
 
-	 ```bash
-	 pnpm install
-	 ```
+### 架构流程概览
 
-2. 复制环境变量示例并按需修改：
+终端用户 → Next.js BFF（App Router / tRPC / API Routes）→ { Supabase | Redis | 地图服务 | LLM | ASR } → 行程与媒体结果 → 前端地图与时间轴渲染。
 
-	 ```bash
-	 copy .env.example .env.local
-	 ```
+## 目录说明
 
-	 关键配置（详见 `.env.example`）：
+- `src/app`：Next.js 页面、API Route、前端 Provider。
+- `src/services`：行程、费用、地图、媒体等业务逻辑。
+- `src/adapters`：外部服务适配层（LLM、地图、ASR）。
+- `ui/components`：页面级组件与地图视图。
+- `db`：数据库 schema 与初始化脚本。
+- `tmp`：调试脚本（LLM、地图、tRPC 冒烟测试等）。
+- `scripts`：数据库初始化、测试账号、批量脚本。
+- `docs`：PRD、体验说明与素材。
 
-	 - `NEXT_PUBLIC_APP_NAME`: 前端展示名称。
-	 - `NEXT_PUBLIC_AMAP_WEB_KEY` / `AMAP_REST_KEY`: 高德地图 Web 与 REST Key。
-	 - `AI_PROVIDER`: `qwen` 或 `openai`；
-		 - Qwen：设置 `ALIYUN_DASHSCOPE_API_KEY`（阿里云百炼 DashScope Key）。
-		 - OpenAI：设置 `OPENAI_API_KEY` 及可选 `OPENAI_BASE_URL`。
-	 - `IFLYTEK_APP_ID` / `IFLYTEK_API_KEY` / `IFLYTEK_API_SECRET`: 讯飞语音识别凭证。
-	 - `SUPABASE_URL` / `SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_ROLE_KEY`: Supabase 项目配置。
-	 - `REDIS_URL`: Redis 连接串（如 `redis://default:password@redis:6379`）。
-	 - 其他：`LOGTAIL_SOURCE_TOKEN`、`NEXT_TELEMETRY_DISABLED=1` 等。
+## 快速开始
 
-3. 初始化数据库（可选）：
+1. **安装依赖**
+	```bash
+	pnpm install
+	```
+2. **复制并配置环境变量**
+	```bash
+	copy .env.example .env.local
+	```
+	关键变量（详见 `.env.example`）：
+	- `NEXT_PUBLIC_AMAP_WEB_KEY` / `AMAP_REST_KEY`：高德 Web 与 REST Key。
+	- `GOOGLE_MAPS_API_KEY` / `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY`：Google Maps client/server key。
+	- `AI_PROVIDER`：`qwen` 或 `openai`；分别配置 `ALIYUN_DASHSCOPE_API_KEY` 或 `OPENAI_API_KEY`。
+	- `IFLYTEK_*`：讯飞 ASR 凭证。
+	- `SUPABASE_URL` / `SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_ROLE_KEY`：Supabase 项目密钥。
+	- `REDIS_URL`：Redis 连接串。
+	- `LOGTAIL_SOURCE_TOKEN`：日志来源 Token。
+3. **初始化数据库（可选）**
+	```powershell
+	pwsh ./scripts/applySchema.ps1
+	```
+4. **启动开发服务器**
+	```bash
+	pnpm dev
+	```
 
-	 ```powershell
-	 pwsh ./scripts/applySchema.ps1
-	 ```
+### 常用脚本
 
-4. 启动本地开发服务器：
+- 构建生产包：`pnpm build`
+- 启动生产模式：`pnpm start`
+- 代码质量检查：`pnpm lint`
+- 单元测试（Vitest）：`pnpm test`
+- tRPC 冒烟测试：`pnpm tsx tmp/trpcSmoke.ts`
+- 地图接口冒烟测试：`pnpm tsx tmp/mapsSmoke.ts`
+- LLM 通路验证：`pnpm tsx tmp/llmSmoke.ts`
 
-	 ```bash
-	 pnpm dev
-	 ```
+## 环境变量清单
 
-- 生产构建：`pnpm build`
-- 启动生产服务：`pnpm start`
-- 类型与 ESLint 检查：`pnpm lint`
+| 变量 | 说明 |
+| --- | --- |
+| `NEXT_PUBLIC_APP_NAME` | 前端展示的应用名称 |
+| `NEXT_PUBLIC_AMAP_WEB_KEY` / `AMAP_REST_KEY` | 高德地图 Web / REST Key |
+| `NEXT_PUBLIC_AMAP_SECURITY_JS_CODE` | 高德 JS 安全校验码（需开启安全域名时配置） |
+| `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` / `GOOGLE_MAPS_API_KEY` | Google Maps client/server Key |
+| `GOOGLE_MAPS_PROXY_URL` | 访问 Google API 时的代理地址（可选） |
+| `BAIDU_MAP_AK` | 百度地图开放平台 AK |
+| `MAPS_PROVIDER` | 地图服务偏好，控制默认加载逻辑 |
+| `AI_PROVIDER` | `qwen` / `openai`，切换大模型供应商 |
+| `ALIYUN_DASHSCOPE_API_KEY` / `OPENAI_API_KEY` | DashScope 或 OpenAI 凭证 |
+| `IFLYTEK_APP_ID` / `IFLYTEK_API_KEY` / `IFLYTEK_API_SECRET` | 讯飞 ASR 凭证 |
+| `IFLYTEK_HOST` / `IFLYTEK_PATH` / `IFLYTEK_DOMAIN` | 讯飞接口参数（可选） |
+| `SUPABASE_URL` / `SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_ROLE_KEY` | Supabase 项目密钥 |
+| `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` | 前端 Supabase 凭证 |
+| `REDIS_URL` | Redis 连接串，用于缓存 |
+| `LOGTAIL_SOURCE_TOKEN` | Logtail 日志来源 Token |
+| `NEXT_TELEMETRY_DISABLED` | 设为 `1` 以禁用 Next.js 遥测 |
 
 ## Docker 部署
 
-- **本地构建镜像**：
-
+1. 构建镜像
 	```bash
-	docker build -t ghcr.io/username/repo:latest .
+	pnpm docker-build
+	# 或 docker build -t ghcr.io/username/repo:latest .
 	```
-
-- **远程拉取镜像**：
-
+2. 运行容器
+	```bash
+	docker run -p 3000:3000 --env-file .env.local ghcr.io/username/repo:latest
+	```
+3. 拉取远程镜像
 	```bash
 	docker pull ghcr.io/username/repo:latest
 	```
 
-- **运行容器**（确保 `.env.local` 或自定义 env 文件包含 Supabase、Redis、阿里云百炼等密钥）：
+生产环境推荐使用编排系统（Kubernetes / ECS 等）管理敏感凭证，避免写死在镜像中。
 
-	```bash
-	docker run -p 3000:3000 --env-file .env.local ghcr.io/username/repo:latest
-	```
+## CI / CD
 
-	生产环境推荐通过编排系统（Kubernetes / ECS 等）传递 `ALIYUN_DASHSCOPE_API_KEY`、`SUPABASE_*`、`REDIS_URL` 等凭证，避免写死在镜像内。
-
-## CI / CD 配置
-
-- GitHub Actions 工作流：`.github/workflows/docker-build-and-push.yml`。
-	- 触发条件：推送到 `main` 或手动 `workflow_dispatch`。
-	- 构建多架构镜像（`linux/amd64`, `linux/arm64`）。
-	- 根据是否配置 `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` 决定推送到 Docker Hub 或 GHCR。
-	- 使用 `docker/metadata-action` 自动生成 `latest`、分支、commit SHA 等标签。
+- GitHub Actions：`.github/workflows/docker-build-and-push.yml`
+  - 触发：推送到 `main` 或手动 `workflow_dispatch`。
+  - 构建 `linux/amd64` 与 `linux/arm64` 多架构镜像。
+  - 如果配置 `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN`，可额外推送到 Docker Hub。
+  - 使用 `docker/metadata-action` 自动生成 `latest`、分支、commit SHA 等标签。
+- 可选扩展：结合 Supabase Edge Functions、Logtail 或自建 Prometheus / Grafana 做监控。
 
 ## API 说明
 
-- 完整接口契约、字段说明与交互流程详见 [`docs/PRD.md`](docs/PRD.md)。
+- 完整接口契约与业务流程详见 [`docs/PRD.md`](docs/PRD.md)。
+- 行程、地理定位、媒体等核心接口位于 `src/app/api/*`，可通过 `pnpm lint`、`pnpm test` 或临时脚本进行验证。
 
-## 安全注意事项
+## 安全与合规
 
-- 不要将任何 Supabase、LLM、ASR、Redis 等密钥提交到仓库或硬编码在前端代码中。
-- 使用 `.env.local`、部署平台密钥管理或密文管理（如 GitHub Secrets、Vault）。
-- 为 `SUPABASE_SERVICE_ROLE_KEY` 等高权限变量设置最小访问范围，并仅在受信任服务侧使用。
-- 定期轮换 `ALIYUN_DASHSCOPE_API_KEY` 与其他第三方凭证，监控授权使用情况。
+- 不要将任何 Supabase、LLM、ASR、Redis 等密钥提交到仓库或硬编码到前端。
+- 优先使用 `.env.local`、部署平台密钥管理或密文存储（GitHub Secrets、Vault 等）。
+- 为 `SUPABASE_SERVICE_ROLE_KEY` 等高权限凭证设置最小访问范围，仅在受信任的服务端使用。
+- 定期轮换 `ALIYUN_DASHSCOPE_API_KEY`、`OPENAI_API_KEY` 等外部密钥，监控调用情况。
+- 地图与媒体请求采用限速队列，避免触发外部 API 限流。
+- 当 AI 无法精准定位活动地点时，行程卡片会提示“位置信息由AI辅助推断，请注意核实。”，提醒用户自行确认。
 
-## 常见问题（FAQ）
+## 常见问题
 
 - **ASR 调用失败**
-	- 检查 `IFLYTEK_*` 凭证是否正确，是否具有语音听写权限。
-	- 确认网络出口可访问讯飞 API，必要时开启代理或配置专线。
-	- 查看服务日志（`pnpm dev` 控制台或 Docker 容器日志）获取具体错误码。
+  - 检查 `IFLYTEK_*` 凭证及语音听写权限。
+  - 确认出口网络可访问讯飞 API，必要时配置代理。
+  - 查看终端或容器日志获取错误码。
 
-- **LLM 响应为空或报错**
-	- 确认 `AI_PROVIDER` 与对应 key（`ALIYUN_DASHSCOPE_API_KEY` 或 `OPENAI_API_KEY`）已配置且额度充足。
-	- 若使用自定义网关（`OPENAI_BASE_URL`），确保路由正确、证书可信。
-	- 在 `tmp/llmSmoke.ts` 中有示例脚本，可通过 `pnpm tsx tmp/llmSmoke.ts` 验证连接。
+- **LLM 响应为空或异常**
+  - 确认 `AI_PROVIDER` 与对应 Key 是否配置且额度充足。
+  - 若使用自定义网关（例如 `OPENAI_BASE_URL`），确保路由与证书配置正确。
+  - 使用 `pnpm tsx tmp/llmSmoke.ts` 验证连接性。
 
-## Docker 镜像命令速查
+- **地图或媒体无法加载**
+  - 检查地图 Key 是否启用对应 API 权限，或是否触发配额限制。
+  - 查看临时脚本 `tmp/mapsSmoke.ts` / `tmp/asrRouteTest.ts` 输出。
+  - 确认 `REDIS_URL` 配置避免缓存失效导致重复请求。
 
-```bash
-docker pull ghcr.io/username/repo:latest
-docker run -p 3000:3000 --env-file .env.local ghcr.io/username/repo:latest
-```
+## 许可
 
-运行容器前务必提供阿里云百炼 `ALIYUN_DASHSCOPE_API_KEY`（或其他 LLM/OAuth 密钥）等环境变量，避免在镜像内写死敏感信息。
+项目遵循仓库根目录中的 [LICENSE](LICENSE) 文件所述条款。

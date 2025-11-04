@@ -153,16 +153,12 @@ function appendNote(baseNote: string | undefined, addition: string): string {
   return baseNote.includes(addition) ? baseNote : `${baseNote}（${addition}）`;
 }
 
-function buildMissingLocationHint(destination: string): string {
-  return destination.trim()
-    ? `未能在${destination}范围内找到可信地点，地图上将隐藏此活动。`
-    : "未能在目的地范围内找到可信地点，地图上将隐藏此活动。";
+function buildMissingLocationHint(_destination: string): string {
+  return "位置信息由AI辅助推断，请注意核实。";
 }
 
-function buildApproximateLocationHint(destination: string): string {
-  return destination.trim()
-    ? `未能定位到具体地点，已使用${destination}的大致范围。`
-    : "未能定位到具体地点，已使用大致范围。";
+function buildApproximateLocationHint(_destination: string): string {
+  return "位置信息由AI辅助推断，请注意核实。";
 }
 
 function resolveApproximateCoords(destination: string): Pick<Place, "lat" | "lng"> | null {
