@@ -233,9 +233,9 @@ export class IFlytekASRClient implements ASRClient {
     this.appId = appId ?? env.IFLYTEK_APP_ID;
     this.apiKey = apiKey ?? env.IFLYTEK_API_KEY;
     this.apiSecret = apiSecret ?? env.IFLYTEK_API_SECRET;
-    this.host = env.IFLYTEK_HOST ?? DEFAULT_HOST;
-    this.path = env.IFLYTEK_PATH ?? DEFAULT_PATH;
-    this.domain = env.IFLYTEK_DOMAIN ?? DEFAULT_DOMAIN;
+  this.host = (env.IFLYTEK_HOST ?? DEFAULT_HOST).trim();
+  this.path = (env.IFLYTEK_PATH ?? DEFAULT_PATH).trim();
+  this.domain = (env.IFLYTEK_DOMAIN ?? DEFAULT_DOMAIN).trim();
     this.useV2Protocol = this.path.includes("/v2/");
   }
 
