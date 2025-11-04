@@ -1,7 +1,7 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "./types";
 
-let browserClient: SupabaseClient<Database> | null = null;
+let browserClient: SupabaseClient<Database, "public"> | null = null;
 
 function resolveBrowserCredentials() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL ?? "";
@@ -18,14 +18,14 @@ function resolveBrowserCredentials() {
   return { url, anonKey };
 }
 
-export function createSupabaseBrowserClient(): SupabaseClient<Database> {
+export function createSupabaseBrowserClient(): SupabaseClient<Database, "public"> {
   const { url, anonKey } = resolveBrowserCredentials();
 
   if (!url || !anonKey) {
     throw new Error("Supabase browser credentials are missing. Ensure NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY are set.");
   }
 
-  return createClient<Database>(url, anonKey, {
+  return createClient<Database, "public">(url, anonKey, {
     auth: {
       persistSession: true,
       detectSessionInUrl: true
@@ -33,7 +33,7 @@ export function createSupabaseBrowserClient(): SupabaseClient<Database> {
   });
 }
 
-export function getSupabaseBrowserClient(): SupabaseClient<Database> {
+export function getSupabaseBrowserClient(): SupabaseClient<Database, "public"> {
   if (!browserClient) {
     browserClient = createSupabaseBrowserClient();
   }

@@ -32,7 +32,7 @@ export type ExpenseListResult = {
 };
 
 type ExpenseServiceDeps = {
-  supabase: SupabaseClient<Database>;
+  supabase: SupabaseClient<Database, "public">;
   userId: string;
 };
 
@@ -45,7 +45,7 @@ function normalizePagination(value: number | undefined, fallback: number, min = 
 }
 
 export class ExpenseService {
-  private readonly supabase: SupabaseClient<Database>;
+  private readonly supabase: SupabaseClient<Database, "public">;
   private readonly userId: string;
 
   constructor({ supabase, userId }: ExpenseServiceDeps) {
@@ -122,7 +122,7 @@ export class ExpenseService {
 
   async updateExpense(input: ExpenseUpdateInput): Promise<Tables<"expenses">> {
     const payload: Database["public"]["Tables"]["expenses"]["Update"] = {
-      activity_id: input.activityId ?? undefined,
+      activity_id: input.activityId === undefined ? undefined : input.activityId,
       amount: input.amount,
       currency: input.currency,
       category: input.category,
@@ -133,7 +133,7 @@ export class ExpenseService {
 
     const sanitizedPayload = Object.fromEntries(
       Object.entries(payload).filter(([, value]) => value !== undefined)
-    );
+    ) as Database["public"]["Tables"]["expenses"]["Update"];
 
     if (Object.keys(sanitizedPayload).length === 0) {
       throw new TRPCError({ code: "BAD_REQUEST", message: "No fields provided for update" });
@@ -142,8 +142,8 @@ export class ExpenseService {
     const { data, error } = await this.supabase
       .from("expenses")
       .update(sanitizedPayload)
-  .eq("id", input.id)
-  .eq("trip_id", input.tripId)
+      .eq("id", input.id)
+      .eq("trip_id", input.tripId)
       .eq("user_id", this.userId)
       .select()
       .single();

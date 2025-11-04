@@ -39,6 +39,15 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
         };
+        Relationships: [
+          {
+            foreignKeyName: "user_preferences_user_id_fkey",
+            columns: ["user_id"],
+            referencedRelation: "users",
+            referencedColumns: ["id"],
+            isOneToOne: true
+          }
+        ];
       };
       trips: {
         Row: {
@@ -86,6 +95,14 @@ export type Database = {
           synced_at?: string | null;
           updated_at?: string;
         };
+        Relationships: [
+          {
+            foreignKeyName: "trips_user_id_fkey",
+            columns: ["user_id"],
+            referencedRelation: "users",
+            referencedColumns: ["id"]
+          }
+        ];
       };
       travel_plans: {
         Row: {
@@ -115,6 +132,14 @@ export type Database = {
           itinerary_snapshot?: Json;
           updated_at?: string;
         };
+        Relationships: [
+          {
+            foreignKeyName: "travel_plans_user_id_fkey",
+            columns: ["user_id"],
+            referencedRelation: "users",
+            referencedColumns: ["id"]
+          }
+        ];
       };
       trip_days: {
         Row: {
@@ -146,6 +171,14 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
         };
+        Relationships: [
+          {
+            foreignKeyName: "trip_days_trip_id_fkey",
+            columns: ["trip_id"],
+            referencedRelation: "trips",
+            referencedColumns: ["id"]
+          }
+        ];
       };
       places: {
         Row: {
@@ -190,6 +223,14 @@ export type Database = {
           metadata?: Json;
           updated_at?: string;
         };
+        Relationships: [
+          {
+            foreignKeyName: "places_user_id_fkey",
+            columns: ["user_id"],
+            referencedRelation: "users",
+            referencedColumns: ["id"]
+          }
+        ];
       };
       activities: {
         Row: {
@@ -245,6 +286,32 @@ export type Database = {
           confidence?: number | null;
           updated_at?: string;
         };
+        Relationships: [
+          {
+            foreignKeyName: "activities_trip_id_fkey",
+            columns: ["trip_id"],
+            referencedRelation: "trips",
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "activities_trip_day_id_fkey",
+            columns: ["trip_day_id"],
+            referencedRelation: "trip_days",
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "activities_user_id_fkey",
+            columns: ["user_id"],
+            referencedRelation: "users",
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "activities_place_id_fkey",
+            columns: ["place_id"],
+            referencedRelation: "places",
+            referencedColumns: ["id"]
+          }
+        ];
       };
       expenses: {
         Row: {
@@ -285,6 +352,26 @@ export type Database = {
           recorded_at?: string;
           updated_at?: string;
         };
+        Relationships: [
+          {
+            foreignKeyName: "expenses_trip_id_fkey",
+            columns: ["trip_id"],
+            referencedRelation: "trips",
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "expenses_user_id_fkey",
+            columns: ["user_id"],
+            referencedRelation: "users",
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "expenses_activity_id_fkey",
+            columns: ["activity_id"],
+            referencedRelation: "activities",
+            referencedColumns: ["id"]
+          }
+        ];
       };
     };
     Views: {};

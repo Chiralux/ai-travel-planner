@@ -39,7 +39,7 @@ export type TripWithRelations = Tables<"trips"> & {
 };
 
 type TripServiceDeps = {
-  supabase: SupabaseClient<Database>;
+  supabase: SupabaseClient<Database, "public">;
   userId: string;
 };
 
@@ -52,7 +52,7 @@ function ensurePositiveInteger(value: number | undefined, fallback: number, min 
 }
 
 export class TripService {
-  private readonly supabase: SupabaseClient<Database>;
+  private readonly supabase: SupabaseClient<Database, "public">;
   private readonly userId: string;
 
   constructor({ supabase, userId }: TripServiceDeps) {
@@ -107,15 +107,26 @@ export class TripService {
       return null;
     }
 
-    const sortedDays = [...(data.trip_days ?? [])].sort((a, b) => a.day_index - b.day_index);
-    const normalizedDays = sortedDays.map((day) => ({
-      ...day,
-      activities: [...(day.activities ?? [])].sort((a, b) => {
-        const aStart = a.start_time ?? "";
-        const bStart = b.start_time ?? "";
-        return aStart.localeCompare(bStart);
+    const tripDays = (Array.isArray(data.trip_days) ? data.trip_days : []) as Array<
+      Tables<"trip_days"> & { activities?: Tables<"activities">[] | null }
+    >;
+
+    const normalizedDays = [...tripDays]
+      .map((day) => {
+        const activities = Array.isArray(day.activities) ? day.activities : [];
+
+        const sortedActivities = [...activities].sort((a, b) => {
+          const aStart = a.start_time ?? "";
+          const bStart = b.start_time ?? "";
+          return aStart.localeCompare(bStart);
+        });
+
+        return {
+          ...day,
+          activities: sortedActivities
+        } satisfies TripWithRelations["trip_days"][number];
       })
-    }));
+      .sort((a, b) => a.day_index - b.day_index);
 
     return {
       ...(data as Tables<"trips">),

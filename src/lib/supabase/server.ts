@@ -2,7 +2,7 @@ import { createClient, type SupabaseClient, type User } from "@supabase/supabase
 import { loadEnv } from "../../core/config/env";
 import type { Database } from "./types";
 
-export type ServerSupabaseClient = SupabaseClient<Database>;
+export type ServerSupabaseClient = SupabaseClient<Database, "public">;
 
 let serviceRoleClient: ServerSupabaseClient | null = null;
 
@@ -23,7 +23,7 @@ export function getSupabaseServiceRoleClient(): ServerSupabaseClient {
   const url = requireEnv(env.SUPABASE_URL, "SUPABASE_URL");
   const serviceKey = requireEnv(env.SUPABASE_SERVICE_ROLE_KEY, "SUPABASE_SERVICE_ROLE_KEY");
 
-  serviceRoleClient = createClient<Database>(url, serviceKey, {
+  serviceRoleClient = createClient<Database, "public">(url, serviceKey, {
     auth: {
       persistSession: false,
       autoRefreshToken: false
@@ -38,7 +38,7 @@ export function createSupabaseServerClient(accessToken?: string | null): ServerS
   const url = requireEnv(env.SUPABASE_URL, "SUPABASE_URL");
   const anonKey = requireEnv(env.SUPABASE_ANON_KEY, "SUPABASE_ANON_KEY");
 
-  return createClient<Database>(url, anonKey, {
+  return createClient<Database, "public">(url, anonKey, {
     auth: {
       persistSession: false,
       autoRefreshToken: false,
