@@ -433,7 +433,7 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
         finalize(feedback);
       }
     },
-    [form, knownPreferences, mergeParsedInput, setField, accessToken]
+  [form, knownPreferences, setField, accessToken]
   );
 
   const handleActivityFocus = useCallback(
@@ -702,7 +702,7 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
     const trimmed = smartInput.trim();
 
     if (!trimmed) {
-      setSmartInputMessage("请输入自然语言描述，例如：我们三个人带了1万块钱想去西安玩5 天，喜欢美食和户外活动。");
+      setSmartInputMessage("请输入自然语言描述，例如：我想去日本，5 天，预算 1 万元，喜欢美食和动漫，带孩子");
       return;
     }
 
@@ -1162,7 +1162,7 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
         setLoadingPlans(false);
       }
     },
-    [accessToken, hydrateFromPlan, form, result]
+  [accessToken, hydrateFromPlan]
   );
 
   const handleDeletePlan = useCallback(
@@ -1227,7 +1227,7 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
         mapSectionRef.current?.focus?.({ preventScroll: true });
       });
     }
-  }, [setIsMapVisible]);
+  }, []);
 
   const handleScrollToLastActivity = useCallback(() => {
     if (!lastActivityElementId) {
@@ -1264,7 +1264,7 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
         mapSectionRef.current?.focus?.({ preventScroll: true });
       });
     }
-  }, [goBackToPreviousMarker, setIsMapVisible]);
+  }, [goBackToPreviousMarker]);
 
   const shouldShowFloatingMap = isClient && !isMapVisible && markers.length > 0;
   const hasMarkerHistory = focusHistory.length > 0;
@@ -1384,6 +1384,8 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
         setNavigationStatus("该活动缺少地理坐标，无法发起导航。");
         return;
       }
+
+      setIsMapVisible(true);
 
       const origin = await resolveNavigationOrigin(dayIndex, activityIndex);
 
@@ -2011,7 +2013,7 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
                 setSmartInputMessage(null);
               }}
               className="h-24 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 focus:border-blue-500 focus:outline-none"
-              placeholder="例如：我们4个人带了1万块钱想去上海玩4天, 我们喜欢美食和户外活动"
+              placeholder="例如：我想去日本，5 天，预算 1 万元，喜欢美食和动漫，带孩子"
             />
             <div className="flex flex-col gap-2">
               <div className="flex flex-wrap gap-2">
@@ -2109,7 +2111,7 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
               value={form.destination}
               onChange={(event) => setField("destination", event.target.value)}
               className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 focus:border-blue-500 focus:outline-none"
-              placeholder="例如：上海"
+              placeholder="例如：东京"
               required
             />
           </label>
@@ -2208,7 +2210,7 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
                   value={planTitle}
                   onChange={(event) => setPlanTitle(event.target.value)}
                   className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 focus:border-blue-500 focus:outline-none"
-                  placeholder="例如：上海5日游"
+                  placeholder="例如：东京5日游"
                 />
               </label>
               <label className="flex flex-col gap-1">

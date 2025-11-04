@@ -11,8 +11,8 @@ async function resolveRequest(): Promise<RequestLike> {
 
   if (typeof window !== "undefined" && typeof document !== "undefined") {
     try {
-      const module = await import("@ant-design/maps");
-      const candidate = (module as Record<string, unknown>).request;
+  const mapsModule = await import("@ant-design/maps");
+  const candidate = (mapsModule as Record<string, unknown>).request;
 
       if (typeof candidate === "function") {
         cachedRequest = candidate as RequestLike;

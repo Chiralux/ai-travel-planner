@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { MapView } from "../../../ui/components/MapView";
 
 const demoMarkers = [
@@ -21,10 +22,13 @@ export default function MapDebugPage() {
         <h2 className="text-xl font-semibold">上海静态地图</h2>
         <p className="text-sm text-slate-400">通过服务端代理调用高德静态图 API，展示上海市中心示例。</p>
         <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/80">
-          <img
+          <Image
             src="/api/map-static?location=121.473701,31.230391&zoom=11&size=960*600&scale=2"
             alt="上海静态地图"
+            width={960}
+            height={600}
             className="h-auto w-full"
+            priority
           />
         </div>
       </section>
