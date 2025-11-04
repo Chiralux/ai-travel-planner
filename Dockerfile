@@ -2,6 +2,7 @@ FROM node:20-alpine AS base
 ARG NEXT_PUBLIC_SUPABASE_URL
 ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
 RUN corepack enable
+RUN apk add --no-cache ffmpeg
 WORKDIR /app
 
 COPY package.json pnpm-lock.yaml ./
@@ -24,6 +25,7 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
 ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+ENV FFMPEG_PATH=/usr/bin/ffmpeg
 
 RUN addgroup -g 1001 nodejs \
   && adduser -S nextjs -G nodejs
