@@ -20,6 +20,7 @@ RUN pnpm build
 FROM node:20-alpine AS runner
 ARG NEXT_PUBLIC_SUPABASE_URL
 ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
+RUN apk add --no-cache ffmpeg
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
