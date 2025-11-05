@@ -1385,7 +1385,18 @@ function PlannerContent({ accessToken }: PlannerContentProps) {
         return;
       }
 
-      setIsMapVisible(true);
+      setLastActivityElementId(`timeline-activity-${dayIndex}-${activityIndex}`);
+
+      if (typeof window !== "undefined" && mapSectionRef.current) {
+        const rect = mapSectionRef.current.getBoundingClientRect();
+        const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+        const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+        const verticalVisible = rect.top <= viewportHeight * 0.8 && rect.bottom >= viewportHeight * 0.2;
+        const horizontalVisible = rect.left <= viewportWidth && rect.right >= 0;
+        setIsMapVisible(verticalVisible && horizontalVisible);
+      } else {
+        setIsMapVisible(true);
+      }
 
       const origin = await resolveNavigationOrigin(dayIndex, activityIndex);
 

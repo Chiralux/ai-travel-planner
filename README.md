@@ -112,15 +112,15 @@
 1. 构建镜像
 	```bash
 	pnpm docker-build
-	# 或 docker build -t ghcr.io/username/repo:latest .
+	# 或 docker build -t ghcr.io/chiralux/ai-travel-planner:latest .
 	```
 2. 运行容器
 	```bash
-	docker run -p 3000:3000 --env-file .env.local ghcr.io/username/repo:latest
+	docker run -p 3000:3000 --env-file .env.local ghcr.io/chiralux/ai-travel-planner:latest
 	```
 3. 拉取远程镜像
 	```bash
-	docker pull ghcr.io/username/repo:latest
+	docker pull ghcr.io/chiralux/ai-travel-planner:latest
 	```
 
 生产环境推荐使用编排系统（Kubernetes / ECS 等）管理敏感凭证，避免写死在镜像中。
