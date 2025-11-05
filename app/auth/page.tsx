@@ -91,8 +91,7 @@ export default function AuthPage() {
     async (provider: (typeof oauthProviders)[number]["key"]) => {
       try {
         setFeedback(null);
-        const redirectTo = typeof window !== "undefined" ? `${window.location.origin}/planner` : undefined;
-        await signInWithOAuth(provider, redirectTo ? { redirectTo } : undefined);
+        await signInWithOAuth(provider);
       } catch (error) {
         console.error("OAuth sign-in failed", error);
         setFeedback("OAuth 登录失败，请稍后再试。");

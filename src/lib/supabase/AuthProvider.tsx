@@ -82,7 +82,10 @@ export function SupabaseAuthProvider({ children }: { children: ReactNode }) {
   const signInWithOAuth = useCallback<AuthContextValue["signInWithOAuth"]>(
     async (provider, options) => {
       setAuthError(null);
-      const result = await supabase.auth.signInWithOAuth({ provider, options });
+      const resolvedRedirectTo =
+        options?.redirectTo ?? (typeof window !== "undefined" ? `${window.location.origin}/planner` : undefined);
+      const resolvedOptions = resolvedRedirectTo ? { ...options, redirectTo: resolvedRedirectTo } : options;
+      const result = await supabase.auth.signInWithOAuth({ provider, options: resolvedOptions });
       if (result.error) {
         setAuthError(result.error);
       }
